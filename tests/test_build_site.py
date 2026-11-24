@@ -1,4 +1,5 @@
 """생성기 시험. 실행: py -X utf8 -m pytest -q   (가짜 명단 sample/ 만 쓴다 - 실제 이름·번호를 넣지 말 것)"""
+import json
 import os
 import re
 import subprocess
@@ -66,7 +67,7 @@ def test_page_lists_every_name_and_leaks_no_numbers(site):
     assert "그룹은 웹 페이지로 만들 수 없어서 이름 검색으로 대신해요" in html  # 한계도 페이지에 적는다
     assert html.count(ORG) >= 3  # --org 값이 제목·안내·검색 안내에 들어간다 (다른 단체와 안 섞이는 것은 test_two_groups_… 가 본다)
     assert "kakaotalk://web/openExternal?url=" in html  # 카카오톡 안 브라우저 -> 기본 브라우저
-    assert "me=(\\d+)" in html  # ?me=번호 로 이름 고르기를 건너뛴다
+    assert "new URLSearchParams(location.search).get('me')" in html and "/^\\d+$/.test(me || '')" in html  # ?me=번호 로 이름 고르기를 건너뛴다(값 전체가 숫자일 때만)
     assert "new Blob([picked.join('')]" in html  # 고른 사람만 담은 파일을 만든다
     assert 'id="q"' in html and 'id="save" href="./">저장</a>' in html
     assert "navigator.share" not in html  # 웹 공유 시트에는 연락처가 없다(아이폰 시뮬레이터·실기기 확인)
@@ -121,6 +122,8 @@ def test_excel_that_dropped_the_leading_zero_is_repaired():
         ([(1, "가", "010-0000-0001"), (2, "", "010-0000-0002")], "이름이 비었"),
         ([(1, "가", "010-0000-0001"), (2, "나", "02-123-" "4567")], "휴대폰"),
         ([(1, "가", "010-0000-0001"), ("x", "나", "010-0000-0002")], "숫자가 아니"),
+        ([(1, "가", "010-0000-0001"), (1.5, "나", "010-0000-0002")], "숫자가 아니"),  # 소수·음수는 ?me=번호 로 열 수 없다
+        ([(1, "가", "010-0000-0001"), (-2, "나", "010-0000-0002")], "숫자가 아니"),
         ([(1, "가", "010-0000-0001")], "두 명 이상"),
     ],
 )
@@ -165,6 +168,82 @@ def test_errors_are_listed_together_with_the_real_line_numbers(tmp_path):
     for line in ("4번째 줄: 이름이 비었", "5번째 줄: 번호가 숫자가 아니", "6번째 줄(다): 같은 전화번호가 2번째 줄에 이미", "7번째 줄(라): 같은 번호(첫 열)가 6번째 줄에 이미"):
         assert line in msg, (line, msg)  # 문제 4건이 한 번에 나온다
     assert not PHONE.search(msg) and not (tmp_path / "s").exists()
+
+
+def errors_of(src, tmp_path):
+    with pytest.raises(SystemExit) as e:
+        build_site.build(src, tmp_path / "s")
+    assert not PHONE.search(str(e.value)) and not (tmp_path / "s").exists()  # 번호는 안 찍고, 아무것도 안 만든다
+    return str(e.value)
+
+
+@pytest.mark.parametrize(
+    "text, want",
+    [
+        # 따옴표 안 줄바꿈: 2~3번째 줄이 한 행이라 틀린 행은 파일의 4번째 줄이다
+        ('번호,이름,전화번호\r\n1,"김\r\n하나",010-0000-0001\r\nx,나,010-0000-0002\r\n3,다,010-0000-0003\r\n', ["4번째 줄: 번호가 숫자가 아니"]),
+        # 제목줄이 두 줄에 걸쳐도 첫 사람은 3번째 줄
+        ('"번호\r\n(숫자)",이름,전화번호\r\n1,,010-0000-0001\r\n2,나,010-0000-0002\r\n', ["3번째 줄: 이름이 비었"]),
+        # 줄 끝이 \r 뿐인 옛 맥 엑셀 CSV
+        ("번호,이름,전화번호\r1,가,010-0000-0001\r2,,010-0000-0002\r3,다,010-0000-0003\r", ["3번째 줄: 이름이 비었"]),
+        # 줄 끝이 \n 뿐인 파일
+        ("번호,이름,전화번호\n1,가,010-0000-0001\n\n3,나,02-123-" "4567\n", ["4번째 줄(나): 전화번호가 010"]),
+    ],
+)
+def test_error_line_numbers_are_physical_file_lines(tmp_path, text, want):
+    src = tmp_path / "r.csv"
+    src.write_bytes(text.encode("utf-8"))
+    msg = errors_of(src, tmp_path)
+    for w in want:
+        assert w in msg, (w, msg)
+    assert msg.count("번째 줄") == len(want)  # 다른 줄을 잘못 탓하지 않는다
+
+
+def test_cell_with_a_line_break_reads_as_one_name(tmp_path):
+    src = tmp_path / "r.csv"
+    src.write_bytes('번호,이름,전화번호\r\n1,"김\r\n하나",010-0000-0001\r\n2,둘,010-0000-0002\r\n'.encode("utf-8"))
+    assert [n for _, n, _ in build_site.parse(build_site.read_table(src))] == ["김 하나", "둘"]
+
+
+def test_every_problem_of_one_line_is_reported_together():
+    table = [
+        (1, "가", "010-0000-0001"),
+        ("x", "", "02-123-" "4567"),  # 3번째 줄: 번호·이름·전화 셋 다 틀림
+        (1.5, "다", "010-0000-0001"),  # 4번째 줄: 번호 소수 + 앞 줄과 같은 전화
+        (5, "", "010-0000-0005"),  # 5번째 줄: 이름이 비었다. 그래도 번호 5 는 쓴 것으로 센다
+        (5, "마", "010-0000-0006"),  # 6번째 줄: 5번째 줄과 같은 번호
+    ]
+    with pytest.raises(SystemExit) as e:
+        build_site.parse(table)
+    msg = str(e.value)
+    for want in (
+        "3번째 줄: 번호가 숫자가 아니",
+        "3번째 줄: 이름이 비었",
+        "3번째 줄: 전화번호가 010",
+        "4번째 줄: 번호가 숫자가 아니",
+        "4번째 줄(다): 같은 전화번호가 2번째 줄에 이미",
+        "5번째 줄: 이름이 비었",
+        "6번째 줄(마): 같은 번호(첫 열)가 5번째 줄에 이미",
+    ):
+        assert want in msg, (want, msg)
+    assert msg.count("\n- ") == 7 and not PHONE.search(msg)  # 위 7건이 전부다(한 건도 빠지거나 겹치지 않는다)
+
+
+@pytest.mark.parametrize(
+    "org, fname",
+    [
+        ("샘플 모임", "샘플 모임.vcf"),  # 공백·한글은 그대로
+        ("Alpha Club", "Alpha Club.vcf"),
+        ('a/b:c?"d', "a-b-c-d.vcf"),  # 파일 이름에 못 쓰는 글자만 -
+        ("모임<1>", "모임-1-.vcf"),
+        ("  .. ", "contacts.vcf"),  # 남는 게 없으면 기본 이름
+    ],
+)
+def test_downloaded_file_is_named_after_the_group(tmp_path, org, fname):
+    slug, _ = build_site.build(SAMPLE, tmp_path / "s", org=org)
+    html = (tmp_path / "s" / slug / "index.html").read_text(encoding="utf-8")
+    names = [json.loads(m) for m in re.findall(r"(?:download', |a\.download = )(\".*?\")[);]", html)]
+    assert names == [fname, fname]  # 전원 받기(올려 둔 파일)와 일부 받기(즉석 파일) 둘 다 같은 이름
 
 
 def test_two_folders_in_site_are_refused(tmp_path):

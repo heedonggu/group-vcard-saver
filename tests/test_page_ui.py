@@ -185,7 +185,7 @@ def test_everyone_selected_downloads_the_uploaded_file(page, site):
     open_page(page, site["url"])
     pick(page, rows[0][1])
     data, filename = download_text(page)
-    assert filename == "샘플-모임.vcf"
+    assert filename == f"{ORG}.vcf"  # 모임 이름 그대로(공백도 그대로)
     assert data == (site["dir"] / "m" / f"{rows[0][0]}.vcf").read_bytes()
 
 
@@ -197,7 +197,7 @@ def test_partial_selection_builds_a_file_with_only_the_chosen(page, site):
     page.locator("#picks input").nth(2).uncheck()  # rows[3] 뺌
     data, filename = download_text(page)
     raw = data.decode("utf-8")
-    assert filename == "샘플-모임.vcf"
+    assert filename == f"{ORG}.vcf"
     assert re.findall(r"^FN:(.*)\r$", raw, re.M) == [rows[2][1], rows[4][1], rows[5][1]]
     assert raw.count("BEGIN:VCARD") == raw.count("END:VCARD") == 3
     assert raw.startswith("BEGIN:VCARD\r\nVERSION:3.0\r\n") and "\n" not in raw.replace("\r\n", "")
@@ -207,12 +207,20 @@ def test_partial_selection_builds_a_file_with_only_the_chosen(page, site):
 
 def test_me_parameter_opens_the_list_directly(page, site):
     rows = people()
-    page.goto(site["url"] + f"?me={rows[1][0]}")
-    page.wait_for_selector("#picks label.pick")
-    assert page.is_visible("#mine") and page.is_hidden("#list") and page.inner_text("#who") == rows[1][1]
+    for query in (f"?me={rows[1][0]}", f"?x=1&me={rows[1][0]}&y=2"):  # 다른 값이 함께 있어도
+        page.goto(site["url"] + query)
+        page.wait_for_selector("#picks label.pick")
+        assert page.is_visible("#mine") and page.is_hidden("#list") and page.inner_text("#who") == rows[1][1], query
     page.goto(site["url"] + "?me=99999")  # 없는 번호는 처음 화면
     page.wait_for_selector("a.name")
     assert page.is_visible("#list") and page.is_hidden("#mine")
+
+
+@pytest.mark.parametrize("value", ["1x", "1.5", "x1", "1e0", "0x1", "1,2", "-1", "+1", "%201", "1%20", "%00", "", "１"])  # 마지막은 전각 숫자
+def test_me_parameter_must_be_a_whole_number_to_open_a_list(page, site, value):  # 숫자로 시작만 하는 값(1x·1.5)은 번호가 아니다
+    page.goto(site["url"] + f"?me={value}")
+    page.wait_for_selector("a.name")
+    assert page.is_visible("#list") and page.is_hidden("#mine"), value
 
 
 def test_not_me_link_returns_to_the_name_list(page, site):

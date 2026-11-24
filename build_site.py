@@ -9,6 +9,7 @@ site 안에 폴더가 이미 있으면 그 이름(slug)을 그대로 쓴다 - �
 import argparse
 import csv
 import html
+import io
 import json
 import re
 import secrets
@@ -20,7 +21,8 @@ ENCODINGS = ("utf-8-sig", "cp949")  # 한국 엑셀의 'CSV(쉼표로 분리)'�
 
 
 def read_table(path):
-    """제목줄을 뺀 [(번호, 이름, 전화), ...] 를 돌려준다. 끝의 빈 줄은 버리고, 가운데 빈 줄은 parse 가 건너뛴다."""
+    """제목줄을 뺀 [(번호, 이름, 전화), ...] 를 돌려준다. 끝의 빈 줄은 버리고, 가운데 빈 줄은 parse 가 건너뛴다.
+    n 번째 항목 = 파일의 n+2 번째 줄이다. csv 에서 따옴표 안 줄바꿈 때문에 한 행이 여러 줄이면 그 뒤를 빈 줄로 채워 맞춘다."""
     path = Path(path)
     if path.suffix.lower() == ".xlsx":
         import openpyxl  # xlsx 를 읽을 때만 필요(csv 는 표준 라이브러리)
@@ -36,40 +38,52 @@ def read_table(path):
                 continue
         else:
             raise SystemExit("명단 파일 글자 인코딩을 못 읽었어요(UTF-8 또는 CP949 csv).")
-        table = [tuple(r) for r in csv.reader(text.splitlines())]
-    out = [tuple((list(r) + [None, None, None])[:3]) for r in table[1:]]
+        rd, table, seen = csv.reader(io.StringIO(text, newline="")), [], 0  # newline="" : 칸 안의 줄바꿈을 건드리지 않고 파일의 줄을 센다
+        for rec in rd:
+            table += [tuple(rec)] + [()] * (rd.line_num - seen - 1)
+            seen = rd.line_num
+    out =[tuple((list(r) + [None, None, None])[:3]) for r in table[1:]]
     while out and not any(str(c).strip() for c in out[-1] if c is not None):
         out.pop()  # 끝의 빈 줄만 버린다. 가운데 빈 줄을 남겨 둬야 오류 메시지의 줄 번호가 파일과 맞는다
     return out
 
 
 def parse(table):
-    """(번호, 이름, 전화) -> (int, 이름, '010-0000-0001'). 틀린 줄은 모아서 한 번에 알려 준다(전화번호 값은 출력에 안 찍는다)."""
+    """(번호, 이름, 전화) -> (int, 이름, '010-0000-0001'). 틀린 곳은 한 줄에 여럿이어도 모두 모아서 한 번에 알려 준다(전화번호 값은 출력에 안 찍는다)."""
     rows, bad, first = [], [], {}
     for i, (no, name, tel) in enumerate(table, start=2):  # 2 = 제목줄 다음 줄(파일의 줄 번호)
         if not any(str(c).strip() for c in (no, name, tel) if c is not None):
             continue  # 가운데 빈 줄은 건너뛰되 줄 번호는 센다
+        before = len(bad)
         try:
-            no = int(float(str(no).strip()))
+            f = float(str(no).strip())
+            no = int(f)
+            if no != f or no < 0:  # 1.5·-1 은 번호로 못 쓴다(?me=번호 로 열 수 없다)
+                raise ValueError
         except (ValueError, OverflowError):
-            bad.append(f"{i}번째 줄: 번호가 숫자가 아니에요")
-            continue
-        if isinstance(tel, float):
+            no = None
+            bad.append(f"{i}번째 줄: 번호가 숫자가 아니에요(0 이상의 정수)")
+        if isinstance(tel, float) and tel.is_integer():
             tel = int(tel)
         d = re.sub(r"\D", "", str(tel))
         if len(d) == 10 and d.startswith("10"):  # 엑셀이 앞자리 0을 떼먹은 경우
             d = "0" + d
         name = unicodedata.normalize("NFC", re.sub(r"\s+", " ", str(name or ""))).strip()
+        who = f"({name})" if name else ""
         if not name:
             bad.append(f"{i}번째 줄: 이름이 비었어요")
-        elif not re.fullmatch(r"010\d{8}", d):
-            bad.append(f"{i}번째 줄({name}): 전화번호가 010 휴대폰 번호가 아니에요")
-        else:
+        if re.fullmatch(r"010\d{8}", d):
             tel = f"{d[:3]}-{d[3:7]}-{d[7:]}"
-            for what, key in (("전화번호", tel), ("번호(첫 열)", no)):  # 같은 값은 두 번째 줄부터 줄 번호로 알린다
-                if (what, key) in first:
-                    bad.append(f"{i}번째 줄({name}): 같은 {what}가 {first[what, key]}번째 줄에 이미 있어요")
-                first.setdefault((what, key), i)
+        else:
+            tel = None
+            bad.append(f"{i}번째 줄{who}: 전화번호가 010 휴대폰 번호가 아니에요")
+        for what, key in (("전화번호", tel), ("번호(첫 열)", no)):  # 같은 값은 두 번째 줄부터 줄 번호로 알린다
+            if key is None:
+                continue
+            if (what, key) in first:
+                bad.append(f"{i}번째 줄{who}: 같은 {what}가 {first[what, key]}번째 줄에 이미 있어요")
+            first.setdefault((what, key), i)
+        if len(bad) == before:
             rows.append((no, name, tel))
     if not bad and len(rows) < 2:
         bad.append("두 명 이상 있어야 해요")
@@ -245,8 +259,8 @@ h1{margin:14px 0 6px;font-size:28px;line-height:1.25;letter-spacing:-.02em}
     document.body.appendChild(a); a.click(); a.remove();
   });
 
-  var me = (location.search.match(/[?&]me=(\\d+)/) || [])[1];
-  var mine = me && document.querySelector('a.name[data-no="' + me + '"]');
+  var me = new URLSearchParams(location.search).get('me');  // 숫자만으로 된 값이어야 한다(1x·1.5·빈 값은 처음 화면)
+  var mine = /^\\d+$/.test(me || '') && document.querySelector('a.name[data-no="' + me + '"]');
   if (mine) show(mine);
 })();
 </script>
@@ -256,7 +270,7 @@ h1{margin:14px 0 6px;font-size:28px;line-height:1.25;letter-spacing:-.02em}
 
 
 def render(rows, org, title):
-    fname = re.sub(r'[\\/:*?"<>|\s]+', "-", org).strip("-") or "contacts"
+    fname = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "-", org).strip(" .") or "contacts"  # 받는 파일 이름 = 모임 이름 그대로(파일 이름에 못 쓰는 글자만 -)
     vals = {
         "TITLE": html.escape(title),
         "ORG": html.escape(org),

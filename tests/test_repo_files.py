@@ -206,25 +206,32 @@ def test_ci_and_demo_workflows_run_the_tests_and_build_the_sample():  # D10 D13
 
 
 # ---- 개인정보·git (D11, D12) -----------------------------------------------
+# D12 의 범위 = 저장소에 올라가는 것: git 이 추적하는 파일 전부(`git ls-files`) + 모든 브랜치·태그의 커밋 내용.
+# 추적하지 않는 파일(실제 명단·만든 사이트·도구 폴더)은 올라가지 않는다. 명단·사이트가 올라가지 않게 막는 것은 D11 이다.
 
 PHONE = re.compile(r"(?<!\d)01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}(?!\d)")
 FAKE = re.compile(r"0100000\d{4}")  # 010-0000-xxxx
 EMAIL = re.compile(r"\b\w[\w.+-]*@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}")  # 글자로 시작 — 변경 기록의 "+@pytest.fixture" 는 주소가 아니다
+HOME = re.compile(r"(?i)\b[a-z]:[\\/]+users[\\/]+[^\\/\s]+|(?<![\w.:/-])/(?:Users|home)/[^/\s]+")  # 내 컴퓨터의 사용자 폴더 경로(사용자 이름이 드러난다)
 
 
-def leaks(text):  # 어디(줄 번호)인지만 돌려준다 — 찾은 번호·주소는 출력에 찍지 않는다
+def leaks(text):  # 어디(줄 번호)인지만 돌려준다 — 찾은 번호·주소·경로는 출력에 찍지 않는다
     out = []
     for n, line in enumerate(text.splitlines(), 1):
         out += [f"{n}행: 가짜가 아닌 번호꼴" for m in PHONE.finditer(line) if not FAKE.fullmatch(re.sub(r"\D", "", m.group()))]
         out += [f"{n}행: 이메일 주소" for e in EMAIL.findall(line) if "noreply" not in e and "example." not in e]
+        out += [f"{n}행: 내 컴퓨터의 사용자 폴더 경로" for _ in HOME.finditer(line)]
     return out
 
 
 def test_leak_check_catches_what_it_should_and_lets_fake_values_pass():  # D12 (검사기 자체)
     assert leaks("010-0000-0003, 01000000004, user@example.com, 12345@users.noreply.github.com, actions/checkout@v7, +@pytest.fixture()") == []
+    assert leaks("https://example.com/home/page, C:\\Windows\\System32, ~/.cache, /usr/bin/python, 사용자 폴더") == []
     real = "010" + "-1234-" + "5678"  # 이 파일 자신이 검사에 걸리지 않게, 파일에는 이어 붙은 모양으로 적지 않는다
     assert len(leaks("전화 " + real)) == 1 and len(leaks(real.replace("-", ""))) == 1
     assert len(leaks("연락 a.b" + "@gmail.com")) == 1
+    assert len(leaks("폴더 C:" + "\\Us" + "ers\\kim\\x")) == 1 and len(leaks("폴더 c:" + "/us" + "ers/kim")) == 1  # 윈도우
+    assert len(leaks("폴더 /ho" + "me/kim/x")) == 1 and len(leaks("폴더 /Us" + "ers/kim")) == 1  # 리눅스·맥
 
 
 def test_gitignore_blocks_real_rosters_and_built_sites():  # D11
@@ -234,15 +241,20 @@ def test_gitignore_blocks_real_rosters_and_built_sites():  # D11
     assert git("check-ignore", "-q", "sample/roster.sample.csv")[0] == 1
 
 
-def test_no_real_numbers_or_emails_in_files_or_git_history():  # D12
-    bad = []
+def test_no_real_numbers_emails_or_home_paths_in_files_or_git_history():  # D12
+    bad, scanned = [], 0
     for rel in filter(None, git("ls-files", "-z")[1].split("\0")):
         try:
             text = (ROOT / rel).read_text("utf-8")
-        except (UnicodeDecodeError, OSError):  # 이진 파일
+        except (UnicodeDecodeError, OSError):  # 글이 아닌 파일은 훑어볼 수 없으니, 조용히 넘기지 않고 실패로 센다
+            bad.append(f"{rel} 글이 아니라서 검사하지 못했어요")
             continue
+        scanned += 1
         bad += [f"{rel} {x}" for x in leaks(text)]
-    bad += [f"git 기록 {x}" for x in leaks(git("log", "--all", "-p", "--format=", "--no-color")[1])]
+    history = git("log", "--all", "-p", "--format=", "--no-color")[1]
+    bad += [f"git 기록 {x}" for x in leaks(history)]
+    bad += ["git 기록에 글이 아닌 파일이 있어요(검사하지 못했어요)"] * bool(re.search(r"^(Binary files |GIT binary patch)", history, re.M))
+    assert scanned >= 20 and history.count("\n") > 1000, (scanned, "추적 파일·기록이 비정상적으로 적다 — 검사가 빈손으로 통과하면 안 된다")
     assert not bad, bad[:10]
 
 
