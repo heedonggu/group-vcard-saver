@@ -6,6 +6,10 @@
 이 저장소의 **Security → Report a vulnerability**(비공개 신고)로 알려 주세요:
 <https://github.com/heedonggu/group-vcard-saver/security/advisories/new>
 
+## 응답 목표
+
+비공개 신고는 **3일 이내**에 첫 답을 드립니다. 지키지 못하면 이유를 신고 안에 적습니다. 고치는 일정은 첫 답에서 알려 드립니다.
+
 ## 이 도구의 개인정보 성격 (알고 쓰세요)
 
 - 만들어진 페이지와 `m/*.vcf` 에는 명단의 이름·전화번호가 **그대로** 들어 있습니다. 링크를 아는 사람은 전원의 번호를 볼 수 있습니다.

@@ -28,7 +28,7 @@
 5. **안전한가?** 새 개인정보 위험(번호 전송·추적·저장)이 생기지 않는가.
 
 - 다섯 질문에 모두 "예"에 가까우면 **수용**(`accepted`).
-- 방향은 맞지만 지금 우선순위가 낮거나 정보가 더 필요하면 **보류**(이유와 조건을 적고 `needs-info` 또는 로드맵 후보로).
+- 방향은 맞지만 지금 우선순위가 낮거나 정보가 더 필요하면 **보류**. `accepted`·`declined` 를 달지 않고 열어 둡니다. 결과 댓글에 이유와 다시 볼 조건을 적고, 정보가 모자라면 `needs-info`, 로드맵 후보면 ROADMAP 의 번호를 적습니다.
 - 방향과 안 맞거나 위험하면 **거절**(`declined`, ROADMAP 의 어느 원칙인지 적고 가능한 대안을 함께).
 
 ## 4. 적용해 보기
@@ -54,16 +54,33 @@
 ## 6. 지키는 것
 
 - 확인하지 않은 것을 "됩니다"라고 쓰지 않습니다.
+- 확인 주기: 이 저장소의 Watch → Custom → Issues 알림을 켜 두고, 알림이 없어도 **하루 한 번** `needs-triage` 목록을 봅니다(아래 조회 명령).
 - 응답 목표: 첫 답은 3일 이내(주말·휴일 제외하지 않음 — 지키지 못하면 이슈에 사정을 적습니다).
 - `needs-info` 는 14일 동안 답이 없으면 정중히 안내하고 닫습니다. 정보가 오면 다시 엽니다.
 - 같은 내용은 하나로 합치고 서로 링크합니다.
 
 ## 메인테이너용 명령
 
+조회 (읽기만 합니다 — 아무것도 바꾸지 않습니다):
+
 ```bash
-gh issue list --repo heedonggu/group-vcard-saver --label needs-triage      # 접수된 것
-gh issue view <번호> --repo heedonggu/group-vcard-saver --comments         # 내용 읽기
-gh issue edit <번호> --add-label accepted --remove-label needs-triage      # 판단 표시
-gh issue comment <번호> --body-file 결과.md                                # 결과 올리기
-gh issue close <번호> --reason completed                                   # 닫기(거절은 --reason "not planned")
+gh issue list --repo heedonggu/group-vcard-saver --label needs-triage                          # 접수된 것(판단 전)
+gh issue list --repo heedonggu/group-vcard-saver --state all --json number,state,labels,title  # 전체 처리 현황
+gh issue view 1 --repo heedonggu/group-vcard-saver --comments                                  # 내용 읽기(번호를 바꿔서)
+gh run list --repo heedonggu/group-vcard-saver --limit 5                                       # CI·접수 워크플로 실행 기록
+gh label list --repo heedonggu/group-vcard-saver                                               # 라벨
+```
+
+처리 (바꿉니다 — 메인테이너만):
+
+```bash
+gh issue edit <번호> --repo heedonggu/group-vcard-saver --add-label accepted --remove-label needs-triage  # 판단 표시
+gh issue comment <번호> --repo heedonggu/group-vcard-saver --body-file 결과.md                             # 결과 올리기
+gh issue close <번호> --repo heedonggu/group-vcard-saver --reason completed                                # 닫기(거절은 --reason "not planned")
+```
+
+라벨 만들기 (처음 한 번. `.github/labels.yml` 기준이고 `pip install -r requirements-dev.txt` 가 필요합니다. 다시 돌려도 같은 결과입니다):
+
+```bash
+python -c "import subprocess, yaml; [subprocess.run(['gh', 'label', 'create', l['name'], '--color', l['color'], '--description', l['description'], '--force', '--repo', 'heedonggu/group-vcard-saver'], check=True) for l in yaml.safe_load(open('.github/labels.yml', encoding='utf-8'))]"
 ```

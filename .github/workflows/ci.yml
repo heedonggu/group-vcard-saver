@@ -7,12 +7,18 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      REQUIRE_BROWSER: "1"  # playwright·브라우저가 없으면 건너뛰지 않고 실패한다
+      REQUIRE_GIT: "1"      # git 기록 검사가 못 돌면 건너뛰지 않고 실패한다
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0     # git 기록 전체(개인정보 검사용)
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install -r requirements-dev.txt
-      - run: python -m pytest -q
+      - run: python -m playwright install --with-deps chromium
+      - run: python -m pytest -q -rs
       - name: 가짜 명단으로 한 번 만들어 보기
         run: python build_site.py sample/roster.sample.csv "$RUNNER_TEMP/site" --org "샘플 모임"

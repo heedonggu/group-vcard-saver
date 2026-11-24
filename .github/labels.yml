@@ -1,0 +1,28 @@
+# 이슈 판단용 라벨 — docs/TRIAGE.md 의 표와 같은 목록입니다. 저장소에 만드는 법은 docs/TRIAGE.md 맨 아래.
+- name: needs-triage
+  color: "fbca04"
+  description: 접수됨 — 아직 판단 전
+- name: accepted
+  color: "0e8a16"
+  description: 수용 — 적용해 보거나 적용함
+- name: declined
+  color: "b60205"
+  description: 거절 — 이유와 대안을 적음
+- name: needs-info
+  color: "d876e3"
+  description: 재현에 필요한 정보가 부족함
+- name: bug
+  color: "d73a4a"
+  description: 페이지·생성기가 의도와 다르게 동작
+- name: enhancement
+  color: "a2eeef"
+  description: 새 기능·개선 제안
+- name: device-report
+  color: "1d76db"
+  description: 기기·OS·브라우저에서 해 본 결과
+- name: commercial-collab
+  color: "5319e7"
+  description: 상업적 이용·공동 개발 제안
+- name: question
+  color: "cc317c"
+  description: 쓰는 법 질문

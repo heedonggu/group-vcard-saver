@@ -2,7 +2,16 @@
 
 형식: [Keep a Changelog](https://keepachangelog.com/ko/1.1.0/) 를 따르고, 버전은 [유의적 버전](https://semver.org/lang/ko/)을 씁니다.
 
-## [Unreleased]
+## [0.1.1] - 2026-11-24
+
+첫 공개 버전입니다. 0.1.0 은 비공개 저장소의 내부 표시였고 공개한 적이 없습니다.
+
+### Added
+- 저장소 점검 시험(`tests/test_repo_files.py`): 문서 링크·이슈 양식·워크플로·라벨, 그리고 파일과 git 기록에 가짜가 아닌 번호·이메일·명단 파일이 없는지(#3).
+- 이슈 판단용 라벨 목록(`.github/labels.yml`)과 만드는 명령, 이슈 조회·처리 명령, 확인 주기([docs/TRIAGE.md](docs/TRIAGE.md)). SECURITY.md 에 응답 목표.
+
+### Changed
+- CI: 폰 화면 시험이 통째로 건너뛰어지던 것을 막았다(playwright 설치, `REQUIRE_BROWSER=1`)(#1). 액션을 Node 24 용 최신판으로(checkout v7, setup-python v7)(#2).
 
 ### Fixed
 - 이름 검색이 명단 이름 안의 공백("김 하나")과 영문 대소문자를 무시하지 못하던 것.

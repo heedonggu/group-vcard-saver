@@ -1,8 +1,8 @@
 """페이지를 실제 브라우저(크롬 계열)에서 눌러 보는 시험. 실행: py -X utf8 -m pytest -q tests/test_page_ui.py
 
 - 가짜 명단(sample/)으로 만든 페이지를 로컬 서버로 띄우고, 폰 크기 화면에서 이름 검색·선택·체크·저장을 누른다.
-- 브라우저가 없으면 건너뛴다. CI 처럼 꼭 돌려야 할 때는 환경변수 REQUIRE_BROWSER=1 (없으면 실패로 처리).
-- 준비: pip install playwright  (+ 크롬이나 엣지가 깔려 있거나 `python -m playwright install chromium`)
+- 브라우저가 없으면 건너뛴다. CI 처럼 꼭 돌려야 할 때는 환경변수 REQUIRE_BROWSER=1 (playwright 나 브라우저가 없으면 건너뛰지 않고 실패).
+- 준비: pip install -r requirements-dev.txt  (+ 크롬이나 엣지가 깔려 있거나 `python -m playwright install chromium`)
 """
 import csv
 import functools
@@ -16,7 +16,10 @@ from pathlib import Path
 
 import pytest
 
-pw = pytest.importorskip("playwright.sync_api")
+if os.environ.get("REQUIRE_BROWSER"):
+    import playwright.sync_api as pw  # 없으면 ImportError 로 실패한다(건너뛰지 않는다)
+else:
+    pw = pytest.importorskip("playwright.sync_api")
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))

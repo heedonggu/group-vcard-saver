@@ -1,2 +1,6 @@
 -r requirements.txt
 pytest>=8
+# 폰 화면 시험(tests/test_page_ui.py) — 설치 뒤 `python -m playwright install chromium`
+playwright>=1.40
+# 저장소 점검 시험(tests/test_repo_files.py)이 이슈 양식·워크플로 YAML 을 읽는다
+pyyaml>=6
