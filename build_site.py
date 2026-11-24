@@ -15,6 +15,7 @@ import re
 import secrets
 import shutil
 import unicodedata
+from decimal import Decimal
 from pathlib import Path
 
 ENCODINGS = ("utf-8-sig", "cp949")  # 한국 엑셀의 'CSV(쉼표로 분리)'는 CP949 다
@@ -83,11 +84,11 @@ def parse(table):
             continue  # 가운데 빈 줄은 건너뛰되 줄 번호는 센다
         before = len(bad)
         try:
-            f = float(str(no).strip())
-            no = int(f)
-            if no != f or not 0 <= no <= 999_999_999:  # 1.5·-1 은 번호로 못 쓴다(?me=번호 로 열 수 없다). 1e300 처럼 큰 수는 받는 파일 이름이 윈도 경로 길이를 넘는다
+            d = Decimal(str(no).strip())  # float 으로 바꾸면 1.0000000000000001 이 1 로, 1e-999 가 0 으로 둥글려 정수처럼 보인다. Decimal 은 쓴 그대로 정확히 따진다
+            if not d.is_finite() or d != d.to_integral_value() or not 0 <= d <= 999_999_999:  # 1.5·-1 은 번호로 못 쓴다(?me=번호 로 열 수 없다). 1e300 처럼 큰 수는 받는 파일 이름이 윈도 경로 길이를 넘는다
                 raise ValueError
-        except (ValueError, OverflowError):
+            no = int(d)
+        except (ValueError, ArithmeticError):  # 숫자가 아닌 글자는 Decimal 이 InvalidOperation(ArithmeticError)을 낸다
             no = None
             bad.append(f"{i}번째 줄: 번호가 숫자가 아니에요(0 이상, 9자리 이하의 정수)")
         if isinstance(tel, float) and tel.is_integer():
@@ -321,6 +322,16 @@ def render(rows, org, title):
     return re.sub(r"@(TITLE|ORG|FILE_JS|COUNT|NAMES)@", lambda m: vals[m.group(1)], PAGE)  # 한 번에 바꾼다(바뀐 글자를 다시 훑지 않는다)
 
 
+JUNK = {".ds_store", "thumbs.db", "desktop.ini"}  # 맥 파인더·윈도 탐색기가 폴더를 열면 저절로 만드는 파일: 있어도 이 도구의 폴더다
+
+
+def ours(out):
+    """지워도 되는 폴더인가: 이 도구의 산출물(index.html 과 m/*.vcf)뿐이다. index.html 이 있어도 다른 파일·폴더가 섞여 있으면 남의 폴더다."""
+    left = lambda d: [c for c in d.iterdir() if not (c.is_file() and c.name.lower() in JUNK)]
+    m = out / "m"
+    return (out / "index.html").is_file() and {c.name for c in left(out)} <= {"index.html", "m"} and (not m.exists() or m.is_dir() and all(f.is_file() and f.suffix == ".vcf" for f in left(m)))
+
+
 def build(src, site, org="우리 모임", note="", title=None, slug=None):
     """site/<slug>/index.html + site/<slug>/m/<번호>.vcf 를 만들고 (slug, 사람 수)를 돌려준다."""
     rows = parse(read_table(src))
@@ -354,11 +365,12 @@ def build(src, site, org="우리 모임", note="", title=None, slug=None):
         files[no] = raw
     page = render(rows, org, title or f"{org} 연락처 저장")
     out = site / slug
-    if out.exists() and (not out.is_dir() or (any(out.iterdir()) and not (out / "index.html").is_file())):
-        raise SystemExit(f"{out} 는 이 도구가 만든 폴더가 아니라서 지우지 않아요. 새 폴더나 빈 폴더에 만들어 주세요")  # 예: 깃 저장소의 .git
+    if out.exists() and (not out.is_dir() or (any(out.iterdir()) and not ours(out))):
+        raise SystemExit(f"{out} 는 이 도구가 만든 폴더가 아니라서 지우지 않아요. 새 폴더나 빈 폴더에 만들어 주세요")  # 예: 깃 저장소의 .git, index.html 이 든 다른 프로젝트 폴더
     shutil.rmtree(out, ignore_errors=True)  # 이전 빌드 산출물 정리(줄어든 명단의 옛 파일이 남지 않게)
-    (out / "m").mkdir(parents=True)
-    (out / "index.html").write_text(page, encoding="utf-8", newline="\n")  # 먼저 쓴다: 중간에 쓰기가 실패해도 이 도구가 만든 폴더로 알아봐서 다시 만들 수 있다
+    out.mkdir(parents=True, exist_ok=True)  # 윈도에서 폴더를 다른 창이 쓰고 있으면 안의 것만 지워지고 폴더는 남는다
+    (out / "index.html").write_text(page, encoding="utf-8", newline="\n")  # 먼저 쓴다: 중간에 쓰기가 실패해도 빈 폴더이거나 이 도구가 만든 폴더라서 다시 만들 수 있다
+    (out / "m").mkdir()
     for no, raw in files.items():
         (out / "m" / f"{no}.vcf").write_bytes(raw)
     return slug, len(rows)

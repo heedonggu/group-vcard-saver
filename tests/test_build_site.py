@@ -382,6 +382,64 @@ def test_a_folder_this_tool_did_not_make_is_never_deleted(tmp_path):
     assert build_site.build(SAMPLE, tmp_path / "e")[0] == "mine"
 
 
+def test_a_folder_with_index_html_is_not_ours_unless_it_holds_only_our_files(tmp_path):
+    web = tmp_path / "web"  # 다른 프로젝트의 폴더: index.html 이 있어도 다른 파일이 섞여 있으면 지우지 않는다
+    (web / "blog").mkdir(parents=True)
+    (web / "blog" / "index.html").write_text("<p>내 블로그</p>")
+    (web / "blog" / "post.md").write_text("글")
+    with pytest.raises(SystemExit) as e:
+        build_site.build(SAMPLE, web)
+    assert "만든 폴더가 아니" in str(e.value) and (web / "blog" / "post.md").read_text() == "글"
+    for sub in ("note.txt", "inner/x.vcf"):  # m/ 안에 .vcf 파일이 아닌 것(파일·폴더)이 있어도 마찬가지
+        w = tmp_path / sub.replace("/", "-")
+        (w / "blog" / "m").mkdir(parents=True)
+        (w / "blog" / "index.html").write_text("x")
+        (w / "blog" / "m" / sub).parent.mkdir(exist_ok=True)
+        (w / "blog" / "m" / sub).write_text("남의 글")
+        with pytest.raises(SystemExit):
+            build_site.build(SAMPLE, w)
+        assert (w / "blog" / "m" / sub).read_text() == "남의 글"
+    half = tmp_path / "half"  # 이 도구가 쓰다 만 폴더(index.html 뿐, 또는 index.html + 일부 .vcf)는 다시 만들 수 있다
+    (half / "abc" / "m").mkdir(parents=True)
+    (half / "abc" / "index.html").write_text("x")
+    (half / "abc" / "m" / "1.vcf").write_text("x")
+    assert build_site.build(SAMPLE, half) == ("abc", 6)
+    (half / "abc" / "m" / "99.vcf").write_text("옛 파일")
+    (half / "abc" / "m").rename(half / "abc" / "old")  # m/ 가 없고 다른 이름의 폴더가 있으면 남의 폴더
+    with pytest.raises(SystemExit):
+        build_site.build(SAMPLE, half)
+    assert (half / "abc" / "old" / "99.vcf").exists()
+    junk = tmp_path / "junk"  # 맥·윈도가 폴더를 열면 저절로 만드는 파일은 남의 파일이 아니다(다시 만들 때 함께 지워진다)
+    build_site.build(SAMPLE, junk, slug="abc")
+    for d in (junk / "abc", junk / "abc" / "m"):
+        for n in (".DS_Store", "Thumbs.db", "Desktop.ini"):
+            (d / n).write_text("x")
+    assert build_site.build(SAMPLE, junk) == ("abc", 6)
+    assert not (junk / "abc" / ".DS_Store").exists() and not (junk / "abc" / "m" / "Thumbs.db").exists()
+    (junk / "abc" / "readme.txt").write_text("내 글")  # 그 밖의 파일이 하나라도 있으면 남의 폴더
+    with pytest.raises(SystemExit):
+        build_site.build(SAMPLE, junk)
+    assert (junk / "abc" / "readme.txt").read_text() == "내 글"
+
+
+@pytest.mark.parametrize("fail", ["index.html", "3.vcf"])
+def test_a_write_that_fails_halfway_leaves_a_folder_that_can_be_rebuilt(tmp_path, monkeypatch, fail):
+    def failing(real):  # 디스크가 찼다는 오류를 해당 파일에서만 낸다
+        def write(self, *a, **k):
+            if self.name == fail:
+                raise OSError(28, "No space left on device")
+            return real(self, *a, **k)
+        return write
+
+    monkeypatch.setattr(Path, "write_text", failing(Path.write_text))
+    monkeypatch.setattr(Path, "write_bytes", failing(Path.write_bytes))
+    with pytest.raises(OSError):
+        build_site.build(SAMPLE, tmp_path / "s", slug="abc")
+    monkeypatch.undo()
+    assert build_site.build(SAMPLE, tmp_path / "s") == ("abc", 6)  # 쓰다 만 폴더를 남의 폴더로 오해해 거절하지 않는다
+    assert len(list((tmp_path / "s" / "abc" / "m").glob("*.vcf"))) == 6
+
+
 def test_nothing_is_changed_when_a_check_fails_before_writing(tmp_path):
     slug, _ = build_site.build(SAMPLE, tmp_path / "s", org=ORG)
     before = {p.relative_to(tmp_path).as_posix(): p.read_bytes() for p in (tmp_path / "s").rglob("*") if p.is_file()}
@@ -508,6 +566,7 @@ def test_missing_or_broken_inputs_get_a_plain_message_not_a_traceback(tmp_path):
     (tmp_path / "empty.csv").write_bytes(b"")
     (tmp_path / "long.csv").write_bytes(("번호,이름,전화번호\n1," + "가" * 200000 + ",010-0000-0001\n2,나,010-0000-0002\n").encode())  # csv 한 칸 한도(131072자)를 넘는다
     (tmp_path / "big.csv").write_bytes("번호,이름,전화번호\n1e300,가,010-0000-0001\n2,나,010-0000-0002\n".encode())  # 300자리 번호 = 윈도 경로 길이를 넘는 파일 이름
+    (tmp_path / "frac.csv").write_bytes("번호,이름,전화번호\n1.0000000000000001,가,010-0000-0001\n2,나,010-0000-0002\n".encode())  # float 으로 바꾸면 1 로 둥글려진다
     for args, want in (
         ((tmp_path / "없는파일.csv", tmp_path / "s1"), "못 찾았어요"),
         ((tmp_path / "dir.csv", tmp_path / "s2"), "못 찾았어요"),  # 폴더를 명단으로 준 경우
@@ -516,6 +575,7 @@ def test_missing_or_broken_inputs_get_a_plain_message_not_a_traceback(tmp_path):
         ((tmp_path / "empty.csv", tmp_path / "s4"), "두 명 이상"),
         ((tmp_path / "long.csv", tmp_path / "s5"), "한 칸이 너무 길어요"),
         ((tmp_path / "big.csv", tmp_path / "s6"), "번호가 숫자가 아니에요"),
+        ((tmp_path / "frac.csv", tmp_path / "s9"), "번호가 숫자가 아니에요"),
         ((SAMPLE, tmp_path / "s7", "--slug", "NUL"), "64자까지"),  # 윈도에서 NUL 폴더는 못 만든다
         ((SAMPLE, tmp_path / "file" / "s8"), "쓰지 못했어요"),  # 파일 아래에는 폴더를 못 만든다(운영체제가 거부하는 경우)
     ):
@@ -527,7 +587,13 @@ def test_missing_or_broken_inputs_get_a_plain_message_not_a_traceback(tmp_path):
 def test_roster_numbers_are_whole_and_at_most_nine_digits():
     ok = build_site.parse([("999999999", "가", "010-0000-0001"), ("1e2", "나", "010-0000-0002")])
     assert [no for no, _, _ in ok] == [999999999, 100]
-    for bad in ("1000000000", "1e300", "99999999999999999999", "1e400"):  # 받는 파일 이름이 길어져 윈도에서 못 만든다
+    ok = build_site.parse([("1.000000000000000000", "가", "010-0000-0001"), ("5.", "나", "010-0000-0002"), ("007", "다", "010-0000-0003"), (12.0, "라", "010-0000-0004")])
+    assert [no for no, _, _ in ok] == [1, 5, 7, 12]  # 쓴 그대로 정수면 소수점·앞자리 0 이 있어도 받는다(엑셀 숫자 칸은 12.0 으로 온다)
+    for bad in (
+        "1000000000", "1e300", "99999999999999999999", "1e400", "1e999999999999999999999",  # 받는 파일 이름이 길어져 윈도에서 못 만든다
+        "1.0000000000000001", "999999998.999999999", "1e-999", "-1e-999", "1e-999999999999999999999", "0.0000001",  # float 으로 바꾸면 둥글려져 정수가 된다(1·999999999·0). 쓴 그대로 정수가 아니면 거부한다
+        "nan", "inf", "-inf",
+    ):
         with pytest.raises(SystemExit) as e:
             build_site.parse([(bad, "가", "010-0000-0001"), ("2", "나", "010-0000-0002")])
         assert "2번째 줄: 번호가 숫자가 아니에요" in str(e.value), bad
