@@ -11,7 +11,7 @@
 - 이슈 판단용 라벨 목록(`.github/labels.yml`)과 만드는 명령, 이슈 조회·처리 명령, 확인 주기([docs/TRIAGE.md](docs/TRIAGE.md)). SECURITY.md 에 응답 목표.
 
 ### Changed
-- CI: 폰 화면 시험이 통째로 건너뛰어지던 것을 막았다(playwright 설치, `REQUIRE_BROWSER=1`)(#1). 액션을 Node 24 용 최신판으로(checkout v7, setup-python v7)(#2).
+- CI: 폰 화면 시험이 통째로 건너뛰어지던 것을 막았다(playwright 설치, `REQUIRE_BROWSER=1`)(#1). 액션을 Node 24 용 최신판으로(ci·demo-pages 모두 checkout v7, setup-python v7)(#2).
 - 문서: "연락처 파일로는 그룹이 생기지 않는다"는 단정을, 확인한 것(웹 페이지는 그룹을 만들 수 없음)과 못 한 것(파일 안의 모임 이름이 폰에서 그룹·라벨이 되는지)으로 나눠 고쳤다(#8).
 
 ### Fixed

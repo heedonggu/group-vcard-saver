@@ -203,6 +203,8 @@ def test_ci_and_demo_workflows_run_the_tests_and_build_the_sample():  # D10 D13
     assert any(s.get("with", {}).get("fetch-depth") == 0 for s in job["steps"])  # git 기록 전체
     demo = read(".github/workflows/demo-pages.yml")
     assert "build_site.py sample/roster.sample.csv" in demo and "--slug demo" in demo and "deploy-pages" in demo
+    for wf in sorted((ROOT / ".github/workflows").glob("*.yml")):  # Node 20 용 옛 액션 버전이 어느 워크플로에도 남지 않는다(#2)
+        assert not re.search(r"actions/(checkout|setup-python)@v[1-6]\b", wf.read_text(encoding="utf-8")), wf.name
 
 
 # ---- 개인정보·git (D11, D12) -----------------------------------------------
