@@ -253,5 +253,6 @@ def test_page_readme_and_verified_notes_tell_the_same_phone_steps(site):  # 기�
     for measured in ("같은 사람을 다시", "Add All", "Android(구글 연락처)"):  # 아이폰·안드로이드 중복 측정값
         assert measured in verified, measured
     assert "그룹은 웹 페이지로 만들 수 없" in page and "그룹을 만들 수 없" in readme  # 그룹 대신 모임 이름 검색, 한계도 적는다
+    assert "그룹·라벨" in readme and "확인하지 못" in readme and "그룹·라벨" in verified  # 파일 안 모임 이름이 그룹이 되는지는 미확인이라고 적는다(#8)
     assert f'"{ORG}"로 검색' in page and "이 이름으로 검색" in readme
     assert "못 한 것" in verified and "미확인" in readme  # 못 한 것을 숨기지 않는다
