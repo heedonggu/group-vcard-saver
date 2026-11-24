@@ -12,6 +12,7 @@ import os
 import re
 import sys
 import threading
+import unicodedata
 from pathlib import Path
 
 import pytest
@@ -40,10 +41,10 @@ class Quiet(http.server.SimpleHTTPRequestHandler):
         pass
 
 
-def serve(tmp_path_factory, src, org=ORG):
+def serve(tmp_path_factory, src, org=ORG, note=""):
     """src 명단으로 페이지를 만들어 로컬 서버로 띄운다. (서버, {origin,url,dir}) 를 돌려준다."""
     out = tmp_path_factory.mktemp("ui") / "site"
-    slug, _ = build_site.build(src, out, org=org)
+    slug, _ = build_site.build(src, out, org=org, note=note)
     handler = functools.partial(Quiet, directory=str(out))
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -75,6 +76,17 @@ def edge_site(tmp_path_factory):
         w.writerow([i, name, f"010-0000-{i:04d}"])
     src.write_bytes(buf.getvalue().encode("utf-8"))
     srv, info = serve(tmp_path_factory, src, org=LONG_ORG)
+    yield info
+    srv.shutdown()
+
+
+HOSTILE_ORG = "BEGIN:VCARD\u200B모임"  # 연락처 카드 경계처럼 보이는 글자 + 눈에 안 보이는 글자
+HOSTILE_NOTE = "x\r\nEND:VCARD\r\nBEGIN:VCARD\r\nFN:Evil"
+
+
+@pytest.fixture(scope="module")
+def hostile_site(tmp_path_factory):
+    srv, info = serve(tmp_path_factory, SAMPLE, org=HOSTILE_ORG, note=HOSTILE_NOTE)
     yield info
     srv.shutdown()
 
@@ -286,6 +298,11 @@ def test_search_ignores_spaces_and_case_inside_names(page, edge_site):
     for q, want in (("김하나", ["김 하나"]), ("김 하나", ["김 하나"]), ("KIMHA", ["Kim Ha"]), ("kim ha", ["Kim Ha"])):
         page.fill("#q", q)
         assert visible_names(page) == want, q
+    for q in ("김하나", "김 하나"):  # 맥에서 붙여 넣은 풀어쓴(NFD) 한글도 같은 이름으로 찾는다
+        nfd = unicodedata.normalize("NFD", q)
+        assert nfd != q
+        page.fill("#q", nfd)
+        assert visible_names(page) == ["김 하나"], q
 
 
 @pytest.mark.parametrize("width", [320, 375])
@@ -324,3 +341,27 @@ def test_dark_mode_changes_background(browser, site):
         colors[scheme] = pg.evaluate("getComputedStyle(document.body).backgroundColor")
         ctx.close()
     assert colors["light"] != colors["dark"] and colors["dark"] == "rgb(14, 16, 19)"
+
+
+def test_text_that_looks_like_a_card_boundary_does_not_break_the_list_or_the_partial_file(page, hostile_site):
+    rows = people()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    open_page(page, hostile_site["url"])
+    pick(page, rows[0][1])
+    labels = page.eval_on_selector_all("#picks label.pick", "els => els.map(e => e.innerText.trim())")
+    assert labels == [n for _, n, _ in rows[1:]]  # 모임 이름·메모 안의 BEGIN:VCARD 글자가 사람을 더 만들거나 줄이지 않는다
+    page.locator("#picks input").nth(0).uncheck()
+    data, _ = download_text(page)
+    lines = data.decode("utf-8").split("\r\n")
+    assert lines.count("BEGIN:VCARD") == lines.count("END:VCARD") == len(rows) - 2 and "FN:Evil" not in lines
+    assert errors == []
+
+
+def test_browser_keeps_the_download_name_we_chose_even_with_invisible_characters(page, hostile_site):
+    rows = people()
+    open_page(page, hostile_site["url"])
+    pick(page, rows[0][1])
+    assert download_text(page)[1] == "BEGIN-VCARD-모임.vcf"  # 전원 받기: 눈에 안 보이는 글자와 : 는 -, 브라우저가 _ 로 바꾸지 않는다
+    page.locator("#picks input").nth(0).uncheck()
+    assert download_text(page)[1] == "BEGIN-VCARD-모임.vcf"  # 일부 받기도 같은 이름

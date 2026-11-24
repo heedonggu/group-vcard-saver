@@ -24,10 +24,17 @@ def read_table(path):
     """제목줄을 뺀 [(번호, 이름, 전화), ...] 를 돌려준다. 끝의 빈 줄은 버리고, 가운데 빈 줄은 parse 가 건너뛴다.
     n 번째 항목 = 파일의 n+2 번째 줄이다. csv 에서 따옴표 안 줄바꿈 때문에 한 행이 여러 줄이면 그 뒤를 빈 줄로 채워 맞춘다."""
     path = Path(path)
+    if not path.is_file():
+        raise SystemExit(f"명단 파일을 못 찾았어요: {path}")
     if path.suffix.lower() == ".xlsx":
-        import openpyxl  # xlsx 를 읽을 때만 필요(csv 는 표준 라이브러리)
-
-        table = [tuple(r) for r in openpyxl.load_workbook(path, data_only=True).active.iter_rows(values_only=True)]
+        try:
+            import openpyxl  # xlsx 를 읽을 때만 필요(csv 는 표준 라이브러리)
+        except ImportError:
+            raise SystemExit("xlsx 를 읽으려면 openpyxl 이 필요해요: pip install openpyxl") from None
+        try:
+            table = [tuple(r) for r in openpyxl.load_workbook(path, data_only=True).active.iter_rows(values_only=True)]
+        except Exception:  # 깨진 파일·엑셀이 아닌 파일
+            raise SystemExit(f"xlsx 명단을 못 열었어요. 엑셀에서 다시 저장해 보세요: {path}") from None
     else:
         raw = path.read_bytes()
         for enc in ENCODINGS:
@@ -68,7 +75,9 @@ def parse(table):
         d = re.sub(r"\D", "", str(tel))
         if len(d) == 10 and d.startswith("10"):  # 엑셀이 앞자리 0을 떼먹은 경우
             d = "0" + d
-        name = unicodedata.normalize("NFC", re.sub(r"\s+", " ", str(name or ""))).strip()
+        name = unicodedata.normalize("NFC", re.sub(r"[\s\x00-\x1f\x7f-\x9f]+", " ", str(name or ""))).strip()  # 줄바꿈·제어문자는 공백 하나로
+        if all(c == " " or unicodedata.category(c) == "Cf" for c in name):
+            name = ""  # 비었거나 공백·폭 없는 글자뿐이면 빈 이름이다
         who = f"({name})" if name else ""
         if not name:
             bad.append(f"{i}번째 줄: 이름이 비었어요")
@@ -85,15 +94,18 @@ def parse(table):
             first.setdefault((what, key), i)
         if len(bad) == before:
             rows.append((no, name, tel))
-    if not bad and len(rows) < 2:
-        bad.append("두 명 이상 있어야 해요")
+    if len(rows) < 2:  # 틀린 줄이 있어도 같이 알린다: 고친 뒤에도 쓸 수 있는 사람이 둘은 있어야 한다
+        bad.append("쓸 수 있는 사람이 두 명 이상 있어야 해요")
     if bad:
         raise SystemExit("명단을 고쳐 주세요:\n- " + "\n- ".join(bad))
     return rows
 
 
 def esc(s):
-    return s.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+    """vCard 글자 값: 역슬래시·세미콜론·쉼표 앞에 역슬래시, 어떤 줄바꿈이든(CR·LF·CRLF·VT·FF·NEL·LS·PS 등) 이스케이프한 \\n 하나로, 탭 말고 다른 제어문자는 공백으로."""
+    s = re.sub(r"[\x00-\x08\x0e-\x1b\x1f\x7f-\x84\x86-\x9f]", " ", s)
+    s = s.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,")
+    return re.sub(r"\r\n|[\n\r\x0b\x0c\x1c-\x1e\x85\u2028\u2029]", r"\\n", s)
 
 
 # 이름은 성/이름으로 나누지 않는다(남궁·선우 오분리 방지). 줄 접기 없음: 75바이트가 넘으면 알려 준다(ROADMAP 참고).
@@ -209,7 +221,7 @@ h1{margin:14px 0 6px;font-size:28px;line-height:1.25;letter-spacing:-.02em}
   var items = Array.prototype.slice.call(document.querySelectorAll('a.name'));
   var cards = [], boxes = [];
 
-  var norm = function (s) { return s.replace(/\\s+/g, '').toLowerCase(); };  // 입력과 명단 이름 모두 공백·영문 대소문자를 무시한다
+  var norm = function (s) { return s.normalize('NFC').replace(/\\s+/g, '').toLowerCase(); };  // 입력과 명단 이름 모두 공백·영문 대소문자를 무시하고, 맥에서 붙여 넣은 풀어쓴 한글(NFD)도 같은 글자로 본다
   $('q').addEventListener('input', function () {  // 이름을 입력하면 맞는 이름만 남긴다
     var v = norm($('q').value), n = 0;
     items.forEach(function (a) { var ok = !v || norm(a.textContent).indexOf(v) !== -1; a.hidden = !ok; if (ok) n++; });
@@ -227,7 +239,7 @@ h1{margin:14px 0 6px;font-size:28px;line-height:1.25;letter-spacing:-.02em}
     cards = []; boxes = [];
     window.scrollTo(0, 0);
     fetch(a.href).then(function (r) { return r.text(); }).then(function (t) {
-      cards = t.split(/(?=BEGIN:VCARD)/).filter(function (c) { return /BEGIN:VCARD/.test(c); });
+      cards = t.split(/^(?=BEGIN:VCARD)/m).filter(function (c) { return /^BEGIN:VCARD/.test(c); });  // 줄 맨 앞의 것만 카드 시작이다(메모·이름 안의 같은 글자는 무시)
       $('picks').textContent = '';
       cards.forEach(function (c) {
         var l = document.createElement('label'), b = document.createElement('input'), s = document.createElement('span');
@@ -269,12 +281,24 @@ h1{margin:14px 0 6px;font-size:28px;line-height:1.25;letter-spacing:-.02em}
 """
 
 
+def hidden(c):
+    """눈에 안 보이는 글자: 제어문자 Cc · 서식 글자 Cf · 줄·문단 구분 Zl Zp · 비문자(U+FDD0–FDEF, 각 면의 끝 FFFE·FFFF)."""
+    o = ord(c)
+    return unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp") or 0xFDD0 <= o <= 0xFDEF or (o & 0xFFFE) == 0xFFFE
+
+
+def file_name(org):
+    """받는 파일 이름 = 모임 이름 그대로 + .vcf. 파일 이름에 못 쓰는 글자(\\ / : * ? " < > |)와 눈에 안 보이는 글자만 -,
+    연달아 있으면 하나. 앞뒤 공백·점은 떼고, 남는 게 없으면 contacts."""
+    s = "".join("\0" if c in '\\/:*?"<>|' or hidden(c) else c for c in org)
+    return (re.sub("\0+", "-", s).strip(" .") or "contacts") + ".vcf"
+
+
 def render(rows, org, title):
-    fname = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "-", org).strip(" .") or "contacts"  # 받는 파일 이름 = 모임 이름 그대로(파일 이름에 못 쓰는 글자만 -)
     vals = {
         "TITLE": html.escape(title),
         "ORG": html.escape(org),
-        "FILE_JS": json.dumps(fname + ".vcf", ensure_ascii=False).replace("<", "\\u003c"),
+        "FILE_JS": json.dumps(file_name(org), ensure_ascii=False).replace("<", "\\u003c"),
         "COUNT": str(len(rows) - 1),
         "NAMES": "\n".join(f'    <a class="name" href="m/{no}.vcf" data-no="{no}">{html.escape(name)}</a>' for no, name, _ in rows),
     }
@@ -284,29 +308,43 @@ def render(rows, org, title):
 def build(src, site, org="우리 모임", note="", title=None, slug=None):
     """site/<slug>/index.html + site/<slug>/m/<번호>.vcf 를 만들고 (slug, 사람 수)를 돌려준다."""
     rows = parse(read_table(src))
+    for s in (org, note, title or ""):
+        try:
+            s.encode("utf-8")
+        except UnicodeEncodeError:  # 짝 잃은 서로게이트: 파일로 쓸 수 없는 글자
+            raise SystemExit("--org/--note/--title 에 파일로 쓸 수 없는 글자(짝 잃은 서로게이트)가 있어요") from None
     site = Path(site)
+    if site.exists() and not site.is_dir():
+        raise SystemExit(f"만들 폴더 자리에 파일이 있어요: {site}")
     old = [d.name for d in site.iterdir() if d.is_dir()] if site.exists() else []
     if len(old) > 1:
         raise SystemExit(f"site 안 폴더가 둘 이상이에요: {old}")
     if slug and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", slug):
-        raise SystemExit("slug 는 영문·숫자·-_ 만 쓸 수 있어요")
+        raise SystemExit("slug 는 영문·숫자·-_ 만, 64자까지 쓸 수 있어요")
     if slug and old and old[0] != slug:
         raise SystemExit(f"site 안에 다른 주소({old[0]})가 이미 있어요. 지우거나 --slug {old[0]} 로 맞춰 주세요")
     slug = slug or (old[0] if old else secrets.token_hex(8))
     cards = {no: (name, tel, card(name, tel, org, note)) for no, name, tel in rows}
     if any(len(l.encode("utf-8")) > 75 for _, _, c in cards.values() for l in c.split("\r\n")):  # 폴더를 건드리기 전에 알린다
         raise SystemExit("한 줄이 75바이트를 넘어요: --org/--note 나 명단의 이름을 줄여 주세요(한글 약 23자)")
-    out = site / slug
-    shutil.rmtree(out, ignore_errors=True)  # 이전 빌드 산출물 정리(줄어든 명단의 옛 파일이 남지 않게)
-    (out / "m").mkdir(parents=True)
+    files = {}  # 폴더를 건드리기 전에 전부 만들고 점검한다(중간에 틀려도 이전 결과가 남는다)
     for no, (name, tel, _) in cards.items():
         raw = "".join(c for k, (_, _, c) in cards.items() if k != no).encode("utf-8")
         assert raw.startswith(b"BEGIN:VCARD\r\nVERSION:3.0\r\n"), "BOM/헤더 이상"
-        assert b"\n" not in raw.replace(b"\r\n", b""), "CRLF 아닌 줄바꿈"
-        assert raw.count(b"BEGIN:VCARD") == raw.count(b"END:VCARD") == len(rows) - 1, "카드 수 불일치"
+        assert not re.search(rb"\r(?!\n)|(?<!\r)\n", raw), "CRLF 아닌 줄바꿈(홑 CR·홑 LF)"
+        lines = raw.split(b"\r\n")  # 줄 전체가 같은 것만 센다(메모·이름 안에 같은 글자가 있어도 카드가 아니다)
+        assert lines.count(b"BEGIN:VCARD") == lines.count(b"END:VCARD") == len(rows) - 1, "카드 수 불일치"
         assert tel.encode() not in raw, f"본인 번호가 들어감: {name}"
+        files[no] = raw
+    page = render(rows, org, title or f"{org} 연락처 저장")
+    out = site / slug
+    if out.exists() and (not out.is_dir() or (any(out.iterdir()) and not (out / "index.html").is_file())):
+        raise SystemExit(f"{out} 는 이 도구가 만든 폴더가 아니라서 지우지 않아요. 새 폴더나 빈 폴더에 만들어 주세요")  # 예: 깃 저장소의 .git
+    shutil.rmtree(out, ignore_errors=True)  # 이전 빌드 산출물 정리(줄어든 명단의 옛 파일이 남지 않게)
+    (out / "m").mkdir(parents=True)
+    for no, raw in files.items():
         (out / "m" / f"{no}.vcf").write_bytes(raw)
-    (out / "index.html").write_text(render(rows, org, title or f"{org} 연락처 저장"), encoding="utf-8", newline="\n")
+    (out / "index.html").write_text(page, encoding="utf-8", newline="\n")
     return slug, len(rows)
 
 

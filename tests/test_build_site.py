@@ -27,10 +27,23 @@ def sample_rows():
 
 
 def cards(raw):
-    return [
-        {l.split(":", 1)[0].split(";")[0]: l.split(":", 1)[1] for l in blk.split("\r\n") if ":" in l}
-        for blk in raw.decode("utf-8").split("BEGIN:VCARD\r\n")[1:]
-    ]
+    """vCard 바이트를 [{필드: 값}, ...] 로 읽는다. 줄 전체가 BEGIN:VCARD / END:VCARD 인 것만 카드 경계다(메모·이름 안의 같은 글자는 값일 뿐)."""
+    lines = raw.decode("utf-8").split("\r\n")
+    assert lines[-1] == "", "마지막 줄도 CRLF 로 끝나야 한다"
+    out, cur = [], None
+    for l in lines[:-1]:
+        if l == "BEGIN:VCARD":
+            assert cur is None, "카드 안에서 또 시작"
+            cur = {}
+        elif l == "END:VCARD":
+            out.append(cur)
+            cur = None
+        else:
+            assert cur is not None, f"카드 밖의 줄: {l!r}"
+            k, v = l.split(":", 1)
+            cur[k.split(";")[0]] = v
+    assert cur is None, "끝나지 않은 카드"
+    return out
 
 
 @pytest.fixture()
@@ -92,8 +105,12 @@ def test_slug_is_kept_on_rebuild_and_can_be_chosen(tmp_path):
     assert build_site.build(SAMPLE, tmp_path / "b", slug="demo")[0] == "demo"
     with pytest.raises(SystemExit):
         build_site.build(SAMPLE, tmp_path / "b", slug="other")  # 다른 주소가 이미 있으면 거부
-    with pytest.raises(SystemExit):
-        build_site.build(SAMPLE, tmp_path / "c", slug="../x")
+    for bad in ("../x", "a b", "a/b", "한글", "x" * 65):  # 허용 문자(영문·숫자·-_)와 길이(64자)를 지킨다
+        with pytest.raises(SystemExit) as e:
+            build_site.build(SAMPLE, tmp_path / "c", slug=bad)
+        assert "64자" in str(e.value), bad
+        assert not (tmp_path / "c").exists()  # 아무것도 만들지 않는다
+    assert build_site.build(SAMPLE, tmp_path / "c", slug="x" * 64)[0] == "x" * 64
 
 
 def test_xlsx_and_cp949_csv_give_the_same_result(tmp_path):
@@ -224,9 +241,34 @@ def test_every_problem_of_one_line_is_reported_together():
         "4번째 줄(다): 같은 전화번호가 2번째 줄에 이미",
         "5번째 줄: 이름이 비었",
         "6번째 줄(마): 같은 번호(첫 열)가 5번째 줄에 이미",
+        "쓸 수 있는 사람이 두 명 이상",  # 쓸 수 있는 줄이 1번 하나뿐이라는 것도 같이
     ):
         assert want in msg, (want, msg)
-    assert msg.count("\n- ") == 7 and not PHONE.search(msg)  # 위 7건이 전부다(한 건도 빠지거나 겹치지 않는다)
+    assert msg.count("\n- ") == 8 and not PHONE.search(msg)  # 위 8건이 전부다(한 건도 빠지거나 겹치지 않는다)
+
+
+@pytest.mark.parametrize(
+    "table, bullets",
+    [
+        ([("x", "", "")], 4),  # 한 줄뿐인데 그 줄이 틀림: 줄의 오류 3건 + 사람 수 부족
+        ([(1, "", "")], 3),
+        ([(1, "가", "010-0000-0001"), ("x", "", "")], 4),  # 쓸 수 있는 사람이 하나뿐
+        ([(1, "가", "010-0000-0001"), (2, "나", "010-0000-0001")], 2),  # 같은 전화번호라 하나만 쓸 수 있다
+        ([], 1),
+    ],
+)
+def test_too_few_people_is_reported_together_with_the_row_errors(table, bullets):
+    with pytest.raises(SystemExit) as e:
+        build_site.parse(table)
+    msg = str(e.value)
+    assert "두 명 이상" in msg and msg.count("\n- ") == bullets and not PHONE.search(msg), msg
+
+
+def test_one_bad_row_file_reports_the_row_and_the_count_and_builds_nothing(tmp_path):
+    src = tmp_path / "r.csv"
+    src.write_bytes("번호,이름,전화번호\r\nx,,\r\n".encode("utf-8"))
+    msg = errors_of(src, tmp_path)
+    assert "2번째 줄: 이름이 비었" in msg and "두 명 이상" in msg
 
 
 @pytest.mark.parametrize(
@@ -237,6 +279,30 @@ def test_every_problem_of_one_line_is_reported_together():
         ('a/b:c?"d', "a-b-c-d.vcf"),  # 파일 이름에 못 쓰는 글자만 -
         ("모임<1>", "모임-1-.vcf"),
         ("  .. ", "contacts.vcf"),  # 남는 게 없으면 기본 이름
+        ("A B~C&D'E%F#G", "A B~C&D'E%F#G.vcf"),  # 쓸 수 없는 글자가 아니면 그대로(브라우저가 ~ 를 _ 로 바꾸는 것은 브라우저 몫)
+        (f"A{chr(0xA0)}B{chr(0x1F600)}C{chr(0xE000)}D", f"A{chr(0xA0)}B{chr(0x1F600)}C{chr(0xE000)}D.vcf"),  # 줄 안 바뀌는 공백·그림 문자·사용자 정의 글자도 그대로
+        ("A\x00B", "A-B.vcf"),  # 제어문자
+        ("A\tB", "A-B.vcf"),
+        ("A\x7fB", "A-B.vcf"),  # DEL
+        ("A\x85B", "A-B.vcf"),  # C1 제어문자(NEL)
+        ("A\x9fB", "A-B.vcf"),
+        ("A\u2028B", "A-B.vcf"),  # 줄·문단 구분
+        ("A\u2029B", "A-B.vcf"),
+        ("A\r\nB", "A-B.vcf"),  # 줄바꿈 둘이 이어져도 하나
+        ("A\u200BB", "A-B.vcf"),  # 눈에 안 보이는 서식 글자: 폭 없는 공백
+        ("A\u200DB", "A-B.vcf"),  # 폭 없는 연결 글자
+        ("A\u202EB", "A-B.vcf"),  # 방향 바꾸기(파일 이름 속이기에 쓰인다)
+        ("A\uFEFFB", "A-B.vcf"),  # BOM
+        ("A\xadB", "A-B.vcf"),  # 소프트 하이픈
+        ("A\x7f\u200B\x85B", "A-B.vcf"),  # 이어진 것은 하나로
+        ("A\uFDD0B", "A-B.vcf"),  # 비문자: 글자로 쓰지 않는 코드 포인트(브라우저가 _ 로 바꾼다)
+        ("A\uFDEFB", "A-B.vcf"),
+        ("A\uFFFEB", "A-B.vcf"),
+        ("A\uFFFFB", "A-B.vcf"),
+        ("A\U0001fffeB", "A-B.vcf"),
+        ("A\U0010ffffB", "A-B.vcf"),
+        (f"A{chr(0xFDCF)}B{chr(0xFDF0)}", f"A{chr(0xFDCF)}B{chr(0xFDF0)}.vcf"),  # 비문자 범위 바로 옆(FDCF·FDF0)은 그대로
+        (f"A{chr(0xFFFD)}B", f"A{chr(0xFFFD)}B.vcf"),  # U+FFFD(대체 글자)는 비문자가 아니다
     ],
 )
 def test_downloaded_file_is_named_after_the_group(tmp_path, org, fname):
@@ -252,6 +318,136 @@ def test_two_folders_in_site_are_refused(tmp_path):
     with pytest.raises(SystemExit) as e:
         build_site.build(SAMPLE, tmp_path / "a")
     assert "둘 이상" in str(e.value)
+
+
+def test_a_folder_this_tool_did_not_make_is_never_deleted(tmp_path):
+    git = tmp_path / "repo" / ".git"  # 깃 저장소 폴더에 만들면 안의 폴더가 .git 하나뿐이라 그 이름이 주소로 잡힌다
+    git.mkdir(parents=True)
+    (git / "HEAD").write_text("ref: refs/heads/main\n")
+    with pytest.raises(SystemExit) as e:
+        build_site.build(SAMPLE, tmp_path / "repo")
+    assert "만든 폴더가 아니" in str(e.value) and (git / "HEAD").read_text() == "ref: refs/heads/main\n"
+    other = tmp_path / "docs"  # --slug 로 이름을 정해도, 파일이 든 남의 폴더는 지우지 않는다
+    (other / "keep").mkdir(parents=True)
+    (other / "keep" / "note.txt").write_text("내 글")
+    with pytest.raises(SystemExit):
+        build_site.build(SAMPLE, other, slug="keep")
+    assert (other / "keep" / "note.txt").read_text() == "내 글"
+    (tmp_path / "f").mkdir()
+    (tmp_path / "f" / "x").write_text("파일")  # 같은 이름이 파일이면 그것도 그대로 둔다
+    with pytest.raises(SystemExit):
+        build_site.build(SAMPLE, tmp_path / "f", slug="x")
+    assert (tmp_path / "f" / "x").read_text() == "파일"
+    (tmp_path / "e" / "mine").mkdir(parents=True)  # 빈 폴더는 주소로 쓴다
+    assert build_site.build(SAMPLE, tmp_path / "e")[0] == "mine"
+
+
+def test_nothing_is_changed_when_a_check_fails_before_writing(tmp_path):
+    slug, _ = build_site.build(SAMPLE, tmp_path / "s", org=ORG)
+    before = {p.relative_to(tmp_path).as_posix(): p.read_bytes() for p in (tmp_path / "s").rglob("*") if p.is_file()}
+    for kw in ({"org": "\ud800"}, {"note": "a\udfffb"}, {"title": "\ud800\ud800"}):  # 파일로 쓸 수 없는 글자(짝 잃은 서로게이트)
+        with pytest.raises(SystemExit) as e:
+            build_site.build(SAMPLE, tmp_path / "s", **kw)
+        assert "서로게이트" in str(e.value), kw
+    assert {p.relative_to(tmp_path).as_posix(): p.read_bytes() for p in (tmp_path / "s").rglob("*") if p.is_file()} == before
+    with pytest.raises(SystemExit):
+        build_site.build(SAMPLE, tmp_path / "t", org="\ud800")
+    assert not (tmp_path / "t").exists()
+
+
+BREAKS = ["\r", "\n", "\r\n", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"]
+
+
+@pytest.mark.parametrize("br", BREAKS, ids=lambda s: "+".join(f"U{ord(c):04X}" for c in s))
+def test_every_kind_of_line_break_becomes_one_escaped_newline(tmp_path, br):
+    slug, n = build_site.build(SAMPLE, tmp_path / "s", org=f"모임{br}이름", note=f"가{br}나{br}{br}다")
+    files = list((tmp_path / "s" / slug / "m").glob("*.vcf"))
+    assert len(files) == n
+    for p in files:
+        raw = p.read_bytes()
+        assert not re.search(rb"\r(?!\n)|(?<!\r)\n", raw)  # 줄 끝은 CRLF 뿐: 홑 CR·홑 LF 가 없다
+        got = cards(raw)
+        assert len(got) == n - 1
+        assert all(c["NOTE"] == "가\\n나\\n\\n다" and c["ORG"] == c["CATEGORIES"] == "모임\\n이름" for c in got)  # 줄바꿈 하나 = \n 하나(CRLF 는 하나)
+        assert all(len(l) <= 75 for l in raw.split(b"\r\n"))
+    html = (tmp_path / "s" / slug / "index.html").read_text(encoding="utf-8")
+    assert '"모임-이름.vcf"' in html  # 받는 파일 이름에는 줄바꿈이 들어가지 않는다
+
+
+@pytest.mark.parametrize(
+    "text, want",
+    [
+        ("a\r\nb", "a\\nb"),
+        ("a\n\rb", "a\\n\\nb"),  # LF 다음 CR 은 CRLF 가 아니라 줄바꿈 둘
+        ("a\r\rb", "a\\n\\nb"),
+        ("a\\b;c,d", "a\\\\b\\;c\\,d"),  # 역슬래시·세미콜론·쉼표
+        ("a\tb", "a\tb"),  # 탭은 그대로
+    ],
+)
+def test_vcard_text_escaping(text, want):
+    assert build_site.esc(text) == want
+
+
+def test_control_characters_become_spaces_but_tab_stays(tmp_path):
+    slug, n = build_site.build(SAMPLE, tmp_path / "s", note="a\x00b\x07c\x1fd\x7fe\x80f\x9fg\th")
+    for p in (tmp_path / "s" / slug / "m").glob("*.vcf"):
+        raw = p.read_bytes()
+        assert not re.search("[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029]", raw.decode("utf-8").replace("\r\n", ""))  # 탭 말고는 제어문자가 하나도 없다
+        assert all(c["NOTE"] == "a b c d e f g\th" for c in cards(raw))
+
+
+def test_names_lose_control_characters_and_line_breaks():
+    rows = build_site.parse([(1, "가\x00나\x7f다", "010-0000-0001"), (2, "라\u2028마\x85바", "010-0000-0002")])
+    assert [n for _, n, _ in rows] == ["가 나 다", "라 마 바"]
+    with pytest.raises(SystemExit) as e:
+        build_site.parse([(1, "가", "010-0000-0001"), (2, "\x00\x7f", "010-0000-0002"), (3, "다", "010-0000-0003")])
+    assert "3번째 줄: 이름이 비었" in str(e.value)  # 제어문자뿐인 이름은 빈 이름이다
+    with pytest.raises(SystemExit) as e:  # 폭 없는 공백·BOM·방향 표시처럼 눈에 안 보이는 글자뿐인 이름도 빈 이름이다
+        build_site.parse([(1, "가", "010-0000-0001"), (2, "\u200B\uFEFF \u202E", "010-0000-0002"), (3, "다", "010-0000-0003")])
+    assert "3번째 줄: 이름이 비었" in str(e.value) and "3번째 줄(" not in str(e.value)
+    assert build_site.parse([(1, "가\u200D나", "010-0000-0001"), (2, "다", "010-0000-0002")])[0][1] == "가\u200D나"  # 글자 사이의 것은 지키지 않고 그대로
+
+
+def test_text_that_looks_like_vcard_lines_cannot_add_or_hide_cards(tmp_path):
+    evil = "x\r\nEND:VCARD\r\nBEGIN:VCARD\r\nFN:Evil\r\nTEL:010-0000-9999"  # 줄 하나가 75바이트를 넘지 않는 길이로
+    slug, n = build_site.build(SAMPLE, tmp_path / "s", org="BEGIN:VCARD", note=evil)
+    for p in (tmp_path / "s" / slug / "m").glob("*.vcf"):
+        raw = p.read_bytes()
+        lines = raw.split(b"\r\n")
+        assert lines.count(b"BEGIN:VCARD") == lines.count(b"END:VCARD") == n - 1  # 메모·모임 이름 안의 글자는 카드가 아니다
+        got = cards(raw)
+        assert len(got) == n - 1 and all(c["FN"] != "Evil" and "9999" not in digits(c["TEL"]) for c in got)
+        assert all(c["NOTE"] == evil.replace("\r\n", "\\n") and c["ORG"] == "BEGIN:VCARD" for c in got)
+
+
+def run_cli(*args):
+    cmd = [sys.executable, "-X", "utf8", str(ROOT / "build_site.py"), *map(str, args)]
+    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", env={**os.environ, "PYTHONUTF8": "1"})
+
+
+def test_missing_or_broken_inputs_get_a_plain_message_not_a_traceback(tmp_path):
+    (tmp_path / "bad.xlsx").write_bytes(b"not a zip")
+    (tmp_path / "dir.csv").mkdir()
+    (tmp_path / "file").write_text("x")
+    (tmp_path / "empty.csv").write_bytes(b"")
+    for args, want in (
+        ((tmp_path / "없는파일.csv", tmp_path / "s1"), "못 찾았어요"),
+        ((tmp_path / "dir.csv", tmp_path / "s2"), "못 찾았어요"),  # 폴더를 명단으로 준 경우
+        ((tmp_path / "bad.xlsx", tmp_path / "s3"), "xlsx 명단을 못 열었어요"),
+        ((SAMPLE, tmp_path / "file"), "자리에 파일이 있어요"),
+        ((tmp_path / "empty.csv", tmp_path / "s4"), "두 명 이상"),
+    ):
+        r = run_cli(*args)
+        assert r.returncode == 1 and want in r.stderr and "Traceback" not in r.stderr, (args, r.stderr)
+        assert not (tmp_path / args[1].name).exists() or args[1].name == "file"  # 아무것도 만들지 않는다
+
+
+def test_xlsx_without_openpyxl_gets_an_install_hint(tmp_path, monkeypatch):
+    (tmp_path / "r.xlsx").write_bytes(b"x")
+    monkeypatch.setitem(sys.modules, "openpyxl", None)  # 설치 안 된 것처럼
+    with pytest.raises(SystemExit) as e:
+        build_site.read_table(tmp_path / "r.xlsx")
+    assert "pip install openpyxl" in str(e.value)
 
 
 def fake_roster(path, n, prefix, block="0000"):
