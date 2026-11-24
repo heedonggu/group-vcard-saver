@@ -1,0 +1,45 @@
+name: 상업적 이용·공동 개발 제안
+description: 상업적 용도로 쓰고 싶어요 — 같이 개발해요
+labels: ["commercial-collab", "needs-triage"]
+title: "[상업 참여] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        이 프로젝트는 비상업적 용도에 자유롭고([라이선스](../blob/main/LICENSE)), 상업적 용도는 **같이 참여해서 개발**하는 것으로 시작합니다.
+        절차는 [COMMERCIAL.md](../blob/main/COMMERCIAL.md). 조건이 합의되기 전에는 상업적 이용 허락이 아닙니다.
+        **전화번호·이메일 같은 개인 연락처는 적지 마세요.** 이 이슈에서 대화를 이어 갑니다.
+  - type: textarea
+    id: who
+    attributes:
+      label: 어떤 곳(팀·서비스)에서 쓰려고 하나요?
+      description: 회사·서비스 이름과 한 줄 소개면 충분해요.
+    validations:
+      required: true
+  - type: textarea
+    id: usecase
+    attributes:
+      label: 사용 목적과 규모
+      description: 누가 쓰고(몇 명 규모), 어떤 흐름에 넣으려는지.
+    validations:
+      required: true
+  - type: textarea
+    id: need
+    attributes:
+      label: 필요한 기능·바꿔야 할 점
+  - type: checkboxes
+    id: how
+    attributes:
+      label: 어떻게 참여할 수 있나요? (해당되는 것)
+      options:
+        - label: 코드로 기여할 수 있어요(PR)
+        - label: 기기 시험·보고를 해 줄 수 있어요
+        - label: 문서·번역을 도울 수 있어요
+        - label: 필요한 기능의 개발을 같이 설계하고 싶어요
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 확인
+      options:
+        - label: 개인 연락처와 실제 명단을 적지 않았어요.
+          required: true

@@ -1,0 +1,21 @@
+# 만들어진 사이트와 실제 명단은 절대 올리지 않는다 (sample/ 의 가짜 명단만 예외)
+site/
+_site/
+public/
+*.xlsx
+*.csv
+!sample/*.csv
+명단*
+roster*
+!sample/roster.sample.csv
+
+# 내부 점검 기록(로컬 전용)
+audit/
+
+# 파이썬·도구
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+.env

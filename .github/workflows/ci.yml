@@ -1,0 +1,18 @@
+name: ci
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+      - name: 가짜 명단으로 한 번 만들어 보기
+        run: python build_site.py sample/roster.sample.csv "$RUNNER_TEMP/site" --org "샘플 모임"

@@ -1,0 +1,32 @@
+name: demo-pages
+# 가짜 명단(sample/)으로 만든 체험 페이지를 올린다. 실제 명단은 이 저장소에 없다.
+on:
+  push:
+    branches: [main]
+    paths: [build_site.py, sample/**, .github/workflows/demo-pages.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python build_site.py sample/roster.sample.csv _site --org "샘플 모임" --slug demo
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v5

@@ -1,0 +1,57 @@
+name: 버그 신고
+description: 페이지나 생성기가 기대와 다르게 동작해요
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **실제 이름·전화번호·명단 파일을 올리지 마세요.** 캡처는 이름·번호를 가려 주세요.
+        가짜 예시 명단(`sample/roster.sample.csv`)으로 재현되면 가장 좋아요.
+  - type: dropdown
+    id: where
+    attributes:
+      label: 어디서 문제가 생겼나요?
+      options:
+        - 명단으로 페이지 만들기 (build_site.py)
+        - 폰에서 저장하는 화면 (만들어진 페이지)
+        - 안내 문구가 실제 화면과 달라요
+        - 문서
+        - 기타
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: 기기·OS·브라우저
+      description: 폰이면 꼭 적어 주세요.
+      placeholder: "예) 아이폰 14 Pro Max, iOS 18.6, 사파리 / 갤럭시 S24, 안드로이드 14, 삼성 인터넷"
+  - type: textarea
+    id: steps
+    attributes:
+      label: 한 일 (순서대로)
+      placeholder: |
+        1.
+        2.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 기대한 것
+  - type: textarea
+    id: actual
+    attributes:
+      label: 실제로 일어난 것
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: 캡처·오류 메시지 (개인정보는 가려 주세요)
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 확인
+      options:
+        - label: 실제 이름·전화번호를 적거나 올리지 않았어요.
+          required: true

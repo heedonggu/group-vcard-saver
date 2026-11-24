@@ -1,0 +1,54 @@
+name: 기기 확인 보고
+description: 내 폰에서 해 봤어요 (성공이든 실패든 도움이 돼요)
+labels: ["device-report", "needs-triage"]
+title: "[기기] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        가짜 예시 페이지로 해 보셔도 됩니다: <https://heedonggu.github.io/group-vcard-saver/demo/>
+        **실제 이름·번호가 보이는 캡처는 올리지 마세요.**
+  - type: input
+    id: device
+    attributes:
+      label: 기기 / OS 버전
+      placeholder: "예) 갤럭시 S24 / 안드로이드 14 (One UI 6.1)"
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: 브라우저 (버전을 알면 같이)
+      placeholder: "예) 크롬, 삼성 인터넷, 사파리"
+    validations:
+      required: true
+  - type: dropdown
+    id: lang
+    attributes:
+      label: 폰 언어
+      options: [한국어, English, 기타]
+    validations:
+      required: true
+  - type: checkboxes
+    id: steps
+    attributes:
+      label: 안내대로 됐나요? (됐으면 체크)
+      description: 아이폰은 README 의 4단계, 안드로이드는 "저장 → 열기 → 계정 고르기" 기준입니다.
+      options:
+        - label: “저장”을 누르니 파일이 받아지거나 연락처 화면이 떴어요
+        - label: 안내에 나온 버튼(공유·연락처·열기·저장 등)이 실제 화면에 있었어요
+        - label: 저장 후 연락처에 전원이 들어갔어요
+        - label: 일부만 체크했을 때 고른 사람만 들어갔어요
+  - type: textarea
+    id: differs
+    attributes:
+      label: 안내와 달랐던 점 (버튼 이름·위치·순서)
+      description: 실제 화면에 쓰인 글자 그대로 적어 주세요.
+  - type: textarea
+    id: dup
+    attributes:
+      label: 이미 있던 사람을 또 저장하면 어떻게 됐나요? (해 보셨다면)
+  - type: textarea
+    id: notes
+    attributes:
+      label: 기타

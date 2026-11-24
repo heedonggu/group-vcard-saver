@@ -1,0 +1,28 @@
+name: triage
+# 새 이슈에 접수 라벨과 안내 댓글을 단다. (판단·적용·결과 댓글은 메인테이너가 docs/TRIAGE.md 기준으로 한다)
+# 이슈 제목·본문은 셸에 넣지 않는다(번호만 쓴다).
+on:
+  issues:
+    types: [opened]
+permissions:
+  issues: write
+jobs:
+  ack:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 접수 라벨과 안내
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUM: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh issue edit "$NUM" --repo "$REPO" --add-label needs-triage || true
+          cat > ack.md <<'EOF'
+          접수했습니다. 고맙습니다.
+
+          메인테이너가 [판단 기준](../blob/main/docs/TRIAGE.md)(재현되는가 · 고칠 가치가 있는가 · [개발 방향](../blob/main/ROADMAP.md)과 맞는가)으로 검토하고,
+          수용하면 **적용해 본 뒤 그 결과를 이 이슈에 남깁니다**(거절·보류도 이유와 함께).
+
+          ⚠ 실제 이름·전화번호·명단이 들어 있다면 지금 지워 주세요. 보이면 메인테이너가 가립니다.
+          EOF
+          gh issue comment "$NUM" --repo "$REPO" --body-file ack.md
