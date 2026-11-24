@@ -106,12 +106,14 @@ def test_slug_is_kept_on_rebuild_and_can_be_chosen(tmp_path):
     assert build_site.build(SAMPLE, tmp_path / "b", slug="demo")[0] == "demo"
     with pytest.raises(SystemExit):
         build_site.build(SAMPLE, tmp_path / "b", slug="other")  # 다른 주소가 이미 있으면 거부
-    for bad in ("../x", "a b", "a/b", "한글", "x" * 65):  # 허용 문자(영문·숫자·-_)와 길이(64자)를 지킨다
+    for bad in ("../x", "a b", "a/b", "한글", "x" * 65, "NUL", "con", "Com1", "LPT9"):  # 허용 문자(영문·숫자·-_)와 길이(64자). 윈도 예약 이름은 폴더로 못 만든다
         with pytest.raises(SystemExit) as e:
             build_site.build(SAMPLE, tmp_path / "c", slug=bad)
         assert "64자" in str(e.value), bad
         assert not (tmp_path / "c").exists()  # 아무것도 만들지 않는다
     assert build_site.build(SAMPLE, tmp_path / "c", slug="x" * 64)[0] == "x" * 64
+    for ok in ("COM0", "COM10", "CONSOLE", "nul1"):  # 예약 이름과 닮았어도 예약이 아닌 이름은 된다
+        assert build_site.build(SAMPLE, tmp_path / f"d-{ok}", slug=ok)[0] == ok
 
 
 def test_xlsx_and_cp949_csv_give_the_same_result(tmp_path):
@@ -504,16 +506,31 @@ def test_missing_or_broken_inputs_get_a_plain_message_not_a_traceback(tmp_path):
     (tmp_path / "dir.csv").mkdir()
     (tmp_path / "file").write_text("x")
     (tmp_path / "empty.csv").write_bytes(b"")
+    (tmp_path / "long.csv").write_bytes(("번호,이름,전화번호\n1," + "가" * 200000 + ",010-0000-0001\n2,나,010-0000-0002\n").encode())  # csv 한 칸 한도(131072자)를 넘는다
+    (tmp_path / "big.csv").write_bytes("번호,이름,전화번호\n1e300,가,010-0000-0001\n2,나,010-0000-0002\n".encode())  # 300자리 번호 = 윈도 경로 길이를 넘는 파일 이름
     for args, want in (
         ((tmp_path / "없는파일.csv", tmp_path / "s1"), "못 찾았어요"),
         ((tmp_path / "dir.csv", tmp_path / "s2"), "못 찾았어요"),  # 폴더를 명단으로 준 경우
         ((tmp_path / "bad.xlsx", tmp_path / "s3"), "xlsx 명단을 못 열었어요"),
         ((SAMPLE, tmp_path / "file"), "자리에 파일이 있어요"),
         ((tmp_path / "empty.csv", tmp_path / "s4"), "두 명 이상"),
+        ((tmp_path / "long.csv", tmp_path / "s5"), "한 칸이 너무 길어요"),
+        ((tmp_path / "big.csv", tmp_path / "s6"), "번호가 숫자가 아니에요"),
+        ((SAMPLE, tmp_path / "s7", "--slug", "NUL"), "64자까지"),  # 윈도에서 NUL 폴더는 못 만든다
+        ((SAMPLE, tmp_path / "file" / "s8"), "쓰지 못했어요"),  # 파일 아래에는 폴더를 못 만든다(운영체제가 거부하는 경우)
     ):
         r = run_cli(*args)
         assert r.returncode == 1 and want in r.stderr and "Traceback" not in r.stderr, (args, r.stderr)
         assert not (tmp_path / args[1].name).exists() or args[1].name == "file"  # 아무것도 만들지 않는다
+
+
+def test_roster_numbers_are_whole_and_at_most_nine_digits():
+    ok = build_site.parse([("999999999", "가", "010-0000-0001"), ("1e2", "나", "010-0000-0002")])
+    assert [no for no, _, _ in ok] == [999999999, 100]
+    for bad in ("1000000000", "1e300", "99999999999999999999", "1e400"):  # 받는 파일 이름이 길어져 윈도에서 못 만든다
+        with pytest.raises(SystemExit) as e:
+            build_site.parse([(bad, "가", "010-0000-0001"), ("2", "나", "010-0000-0002")])
+        assert "2번째 줄: 번호가 숫자가 아니에요" in str(e.value), bad
 
 
 def test_xlsx_without_openpyxl_gets_an_install_hint(tmp_path, monkeypatch):

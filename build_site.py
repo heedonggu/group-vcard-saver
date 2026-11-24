@@ -46,9 +46,12 @@ def read_table(path):
         else:
             raise SystemExit("명단 파일 글자 인코딩을 못 읽었어요(UTF-8 또는 CP949 csv).")
         rd, table, seen = csv.reader(io.StringIO(text, newline="")), [], 0  # newline="" : 칸 안의 줄바꿈을 건드리지 않고 파일의 줄을 센다
-        for rec in rd:
-            table += [tuple(rec)] + [()] * (rd.line_num - seen - 1)
-            seen = rd.line_num
+        try:
+            for rec in rd:
+                table += [tuple(rec)] + [()] * (rd.line_num - seen - 1)
+                seen = rd.line_num
+        except csv.Error:  # 한 칸이 131072자를 넘으면 csv 모듈이 낸다
+            raise SystemExit("명단 csv 를 못 읽었어요: 한 칸이 너무 길어요(131072자 이하)") from None
     out = [tuple((list(r) + [None, None, None])[:3]) for r in table[1:]]
     while out and not any(str(c).strip() for c in out[-1] if c is not None):
         out.pop()  # 끝의 빈 줄만 버린다. 가운데 빈 줄을 남겨 둬야 오류 메시지의 줄 번호가 파일과 맞는다
@@ -82,11 +85,11 @@ def parse(table):
         try:
             f = float(str(no).strip())
             no = int(f)
-            if no != f or no < 0:  # 1.5·-1 은 번호로 못 쓴다(?me=번호 로 열 수 없다)
+            if no != f or not 0 <= no <= 999_999_999:  # 1.5·-1 은 번호로 못 쓴다(?me=번호 로 열 수 없다). 1e300 처럼 큰 수는 받는 파일 이름이 윈도 경로 길이를 넘는다
                 raise ValueError
         except (ValueError, OverflowError):
             no = None
-            bad.append(f"{i}번째 줄: 번호가 숫자가 아니에요(0 이상의 정수)")
+            bad.append(f"{i}번째 줄: 번호가 숫자가 아니에요(0 이상, 9자리 이하의 정수)")
         if isinstance(tel, float) and tel.is_integer():
             tel = int(tel)
         d = re.sub(r"[^0-9]", "", str(tel))  # 아라비아·전각 숫자는 \d 에 걸려도 전화로 못 걸어서 ASCII 0-9 만 센다
@@ -332,8 +335,8 @@ def build(src, site, org="우리 모임", note="", title=None, slug=None):
     old = [d.name for d in site.iterdir() if d.is_dir()] if site.exists() else []
     if len(old) > 1:
         raise SystemExit(f"site 안 폴더가 둘 이상이에요: {old}")
-    if slug and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", slug):
-        raise SystemExit("slug 는 영문·숫자·-_ 만, 64자까지 쓸 수 있어요")
+    if slug and (not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", slug) or re.fullmatch(r"(?i)con|prn|aux|nul|com[1-9]|lpt[1-9]", slug)):
+        raise SystemExit("slug 는 영문·숫자·-_ 만, 64자까지 쓸 수 있어요(윈도가 폴더 이름으로 못 쓰는 CON·NUL·COM1·LPT1 같은 이름은 빼고요)")
     if slug and old and old[0] != slug:
         raise SystemExit(f"site 안에 다른 주소({old[0]})가 이미 있어요. 지우거나 --slug {old[0]} 로 맞춰 주세요")
     slug = slug or (old[0] if old else secrets.token_hex(8))
@@ -355,9 +358,9 @@ def build(src, site, org="우리 모임", note="", title=None, slug=None):
         raise SystemExit(f"{out} 는 이 도구가 만든 폴더가 아니라서 지우지 않아요. 새 폴더나 빈 폴더에 만들어 주세요")  # 예: 깃 저장소의 .git
     shutil.rmtree(out, ignore_errors=True)  # 이전 빌드 산출물 정리(줄어든 명단의 옛 파일이 남지 않게)
     (out / "m").mkdir(parents=True)
+    (out / "index.html").write_text(page, encoding="utf-8", newline="\n")  # 먼저 쓴다: 중간에 쓰기가 실패해도 이 도구가 만든 폴더로 알아봐서 다시 만들 수 있다
     for no, raw in files.items():
         (out / "m" / f"{no}.vcf").write_bytes(raw)
-    (out / "index.html").write_text(page, encoding="utf-8", newline="\n")
     return slug, len(rows)
 
 
@@ -370,7 +373,10 @@ def main(argv=None):
     p.add_argument("--title", help="페이지 제목(기본: '<org> 연락처 저장')")
     p.add_argument("--slug", help="주소 끝 이름(기본: 기존 폴더 이름, 없으면 무작위 16자)")
     a = p.parse_args(argv)
-    slug, n = build(a.roster, a.site, a.org, a.note, a.title, a.slug)
+    try:
+        slug, n = build(a.roster, a.site, a.org, a.note, a.title, a.slug)
+    except OSError as e:  # 운영체제가 읽기·쓰기를 거부한 경우(없는 드라이브·경로 길이·권한·디스크 공간 …)
+        raise SystemExit(f"파일을 읽거나 쓰지 못했어요: {e.filename or ''} ({e.strerror or e})") from None
     print(f"OK {n}명 / 파일 {n}개 / 경로 /{slug}/")
 
 
