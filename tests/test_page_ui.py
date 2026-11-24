@@ -365,3 +365,24 @@ def test_browser_keeps_the_download_name_we_chose_even_with_invisible_characters
     assert download_text(page)[1] == "BEGIN-VCARD-모임.vcf"  # 전원 받기: 눈에 안 보이는 글자와 : 는 -, 브라우저가 _ 로 바꾸지 않는다
     page.locator("#picks input").nth(0).uncheck()
     assert download_text(page)[1] == "BEGIN-VCARD-모임.vcf"  # 일부 받기도 같은 이름
+
+
+@pytest.mark.parametrize(
+    "org, want",
+    [
+        (f"{chr(0xA0)}모임{chr(0xA0)}", "모임.vcf"),  # 앞뒤의 줄 안 바뀌는 공백: 브라우저가 맨 앞의 것을 _ 로 바꿔 버리니 만들 때 먼저 뗀다
+        (f"{chr(0x3000)}모임{chr(0x3000)}", "모임.vcf"),  # 전각 공백
+        (f"가{chr(0x3164)}나", "가-나.vcf"),  # 한글 채움 글자
+        (f"A{chr(0x2800)}B", "A-B.vcf"),  # 점자 빈칸
+    ],
+)
+def test_browser_keeps_download_names_made_from_unicode_spaces_and_fillers(page, tmp_path_factory, org, want):
+    srv, info = serve(tmp_path_factory, SAMPLE, org=org)
+    try:
+        open_page(page, info["url"])
+        pick(page, people()[0][1])
+        assert download_text(page)[1] == want  # 전원 받기
+        page.locator("#picks input").nth(0).uncheck()
+        assert download_text(page)[1] == want  # 일부 받기
+    finally:
+        srv.shutdown()

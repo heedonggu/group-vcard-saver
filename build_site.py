@@ -49,10 +49,27 @@ def read_table(path):
         for rec in rd:
             table += [tuple(rec)] + [()] * (rd.line_num - seen - 1)
             seen = rd.line_num
-    out =[tuple((list(r) + [None, None, None])[:3]) for r in table[1:]]
+    out = [tuple((list(r) + [None, None, None])[:3]) for r in table[1:]]
     while out and not any(str(c).strip() for c in out[-1] if c is not None):
         out.pop()  # 끝의 빈 줄만 버린다. 가운데 빈 줄을 남겨 둬야 오류 메시지의 줄 번호가 파일과 맞는다
     return out
+
+
+# 눈에 안 보이는 글자. 제어문자(Cc)·서식 글자(Cf) 말고도 아무것도 안 그리는 글자가 있다:
+# 채움 글자(FILLERS: 한글·크메르 채움, 결합 이음표, 점자 빈칸 …)와, 앞 글자에 붙어 모양만 바꾸는 변이 선택자·태그(SELECTORS).
+# SELECTORS 는 이모지(하트+FE0F)·한자 안에서 쓰이니 글자 사이에서는 지우지 않고, 이름이 그것뿐일 때만 빈 이름으로 본다.
+FILLERS = ((0x034F, 0x034F), (0x115F, 0x1160), (0x17B4, 0x17B5), (0x2065, 0x2065), (0x2800, 0x2800), (0x3164, 0x3164), (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8))
+SELECTORS = ((0x180B, 0x180F), (0xFE00, 0xFE0F), (0xE0000, 0xE0FFF))
+
+
+def inside(c, ranges):
+    return any(a <= ord(c) <= b for a, b in ranges)
+
+
+def hidden(c):
+    """눈에 안 보이는 글자: 제어문자 Cc · 서식 글자 Cf · 줄·문단 구분 Zl Zp · 비문자(U+FDD0–FDEF, 각 면의 끝 FFFE·FFFF) · 채움 글자(FILLERS)."""
+    o = ord(c)
+    return unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp") or 0xFDD0 <= o <= 0xFDEF or (o & 0xFFFE) == 0xFFFE or inside(c, FILLERS)
 
 
 def parse(table):
@@ -72,16 +89,16 @@ def parse(table):
             bad.append(f"{i}번째 줄: 번호가 숫자가 아니에요(0 이상의 정수)")
         if isinstance(tel, float) and tel.is_integer():
             tel = int(tel)
-        d = re.sub(r"\D", "", str(tel))
+        d = re.sub(r"[^0-9]", "", str(tel))  # 아라비아·전각 숫자는 \d 에 걸려도 전화로 못 걸어서 ASCII 0-9 만 센다
         if len(d) == 10 and d.startswith("10"):  # 엑셀이 앞자리 0을 떼먹은 경우
             d = "0" + d
         name = unicodedata.normalize("NFC", re.sub(r"[\s\x00-\x1f\x7f-\x9f]+", " ", str(name or ""))).strip()  # 줄바꿈·제어문자는 공백 하나로
-        if all(c == " " or unicodedata.category(c) == "Cf" for c in name):
-            name = ""  # 비었거나 공백·폭 없는 글자뿐이면 빈 이름이다
+        if all(c == " " or hidden(c) or inside(c, SELECTORS) for c in name):
+            name = ""  # 비었거나 공백·눈에 안 보이는 글자뿐이면 빈 이름이다
         who = f"({name})" if name else ""
         if not name:
             bad.append(f"{i}번째 줄: 이름이 비었어요")
-        if re.fullmatch(r"010\d{8}", d):
+        if re.fullmatch(r"010[0-9]{8}", d):
             tel = f"{d[:3]}-{d[3:7]}-{d[7:]}"
         else:
             tel = None
@@ -281,17 +298,12 @@ h1{margin:14px 0 6px;font-size:28px;line-height:1.25;letter-spacing:-.02em}
 """
 
 
-def hidden(c):
-    """눈에 안 보이는 글자: 제어문자 Cc · 서식 글자 Cf · 줄·문단 구분 Zl Zp · 비문자(U+FDD0–FDEF, 각 면의 끝 FFFE·FFFF)."""
-    o = ord(c)
-    return unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp") or 0xFDD0 <= o <= 0xFDEF or (o & 0xFFFE) == 0xFFFE
-
-
 def file_name(org):
     """받는 파일 이름 = 모임 이름 그대로 + .vcf. 파일 이름에 못 쓰는 글자(\\ / : * ? " < > |)와 눈에 안 보이는 글자만 -,
-    연달아 있으면 하나. 앞뒤 공백·점은 떼고, 남는 게 없으면 contacts."""
+    연달아 있으면 하나. 앞뒤의 공백(유니코드 공백 포함)·점은 떼고, 남는 게 없거나 변이 선택자뿐이면 contacts."""
     s = "".join("\0" if c in '\\/:*?"<>|' or hidden(c) else c for c in org)
-    return (re.sub("\0+", "-", s).strip(" .") or "contacts") + ".vcf"
+    s = re.sub(r"^[\s.]+|[\s.]+$", "", re.sub("\0+", "-", s))
+    return ("contacts" if all(inside(c, SELECTORS) for c in s) else s) + ".vcf"
 
 
 def render(rows, org, title):

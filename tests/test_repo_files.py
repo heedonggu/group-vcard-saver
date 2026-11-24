@@ -211,8 +211,13 @@ def test_ci_and_demo_workflows_run_the_tests_and_build_the_sample():  # D10 D13
 # D12 의 범위 = 저장소에 올라가는 것: git 이 추적하는 파일 전부(`git ls-files`) + 모든 브랜치·태그의 커밋 내용.
 # 추적하지 않는 파일(실제 명단·만든 사이트·도구 폴더)은 올라가지 않는다. 명단·사이트가 올라가지 않게 막는 것은 D11 이다.
 
-PHONE = re.compile(r"(?<!\d)01[016789][-\s.]?\d{3,4}[-\s.]?\d{4}(?!\d)")
-FAKE = re.compile(r"0100000\d{4}")  # 010-0000-xxxx
+PHONE = re.compile(  # 번호 꼴 네 가지(구분은 - 공백 . 중 어느 것이든): +82 국제 · 휴대폰(붙여 쓴 11자리 포함) · 지역번호가 있는 일반 전화 · 맨 앞 0 이 빠진 꼴(엑셀이 떼먹은 모양)
+    r"(?<![\w+])\+82[-\s.]?\(?0?\)?\d{1,2}\)?[-\s.]?\d{3,4}[-\s.]?\d{4}(?!\d)"
+    r"|(?<!\d)01[016789]\)?[-\s.]?\d{3,4}[-\s.]?\d{4}(?!\d)"
+    r"|(?<![\d-])0\d{1,2}\)?[-.\s]\d{3,4}[-.\s]\d{4}(?![\d-])"
+    r"|(?<![\d-])[1-9]\d[-.\s]\d{3,4}[-.\s]\d{4}(?![\d-])"
+)
+FAKE = re.compile(r"0100000\d{4}")  # 010-0000-xxxx 만 가짜로 쓴다. 다른 번호 꼴은 무엇이든(가짜로 지어낸 것도) 올리지 않는다
 EMAIL = re.compile(r"\b\w[\w.+-]*@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}")  # 글자로 시작 — 변경 기록의 "+@pytest.fixture" 는 주소가 아니다
 HOME = re.compile(r"(?i)\b[a-z]:[\\/]+users[\\/]+[^\\/\s]+|(?<![\w.:/-])/(?:Users|home)/[^/\s]+")  # 내 컴퓨터의 사용자 폴더 경로(사용자 이름이 드러난다)
 
@@ -231,6 +236,11 @@ def test_leak_check_catches_what_it_should_and_lets_fake_values_pass():  # D12 (
     assert leaks("https://example.com/home/page, C:\\Windows\\System32, ~/.cache, /usr/bin/python, 사용자 폴더") == []
     real = "010" + "-1234-" + "5678"  # 이 파일 자신이 검사에 걸리지 않게, 파일에는 이어 붙은 모양으로 적지 않는다
     assert len(leaks("전화 " + real)) == 1 and len(leaks(real.replace("-", ""))) == 1
+    assert len(leaks("(010) " + "1234-5678")) == 1 and len(leaks("010 " + "1234 5678")) == 1 and len(leaks("010.1234." + "5678")) == 1  # 구분이 달라도
+    assert len(leaks("전화 02" + "-123-" + "4567")) == 1 and len(leaks("(02) 123" + "-4567")) == 1 and len(leaks("031 123 " + "4567")) == 1  # 지역번호가 있는 일반 전화
+    assert len(leaks("+82-10-" + "1234-5678")) == 1 and len(leaks("+82 (0)10 " + "1234 5678")) == 1 and len(leaks("+8210" + "12345678")) == 1  # 국제 꼴
+    assert len(leaks("엑셀 10-1234-" + "5678")) == 1 and len(leaks("2 " + "123 4567" + " 번")) == 0  # 맨 앞 0 이 빠진 꼴 / 두 덩어리뿐인 것은 번호 꼴이 아니다
+    assert leaks("2026-11-24, 2026.11.24 09:30, 45368634680, v0.1.1, e585e2d6064e, 010-0000-0001-extra, 0.5 1.25 2000") == []  # 날짜·실행 번호·버전·해시는 번호가 아니다
     assert len(leaks("연락 a.b" + "@gmail.com")) == 1
     assert len(leaks("폴더 C:" + "\\Us" + "ers\\kim\\x")) == 1 and len(leaks("폴더 c:" + "/us" + "ers/kim")) == 1  # 윈도우
     assert len(leaks("폴더 /ho" + "me/kim/x")) == 1 and len(leaks("폴더 /Us" + "ers/kim")) == 1  # 리눅스·맥

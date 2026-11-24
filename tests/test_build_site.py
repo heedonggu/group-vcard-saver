@@ -131,9 +131,16 @@ def test_excel_that_dropped_the_leading_zero_is_repaired():
     assert [t for _, _, t in rows] == ["010-0000-0001", "010-0000-0002"]
 
 
+def other_digits(base, s):
+    return "".join(chr(base + int(c)) for c in s)
+
+
 @pytest.mark.parametrize(
     "table, msg",
     [
+        ([(1, "가", "010-0000-0001"), (2, "나", other_digits(0xFF10, "01000000002"))], "휴대폰"),  # 전각 숫자: 전화로 못 거니 010 번호로 받지 않는다
+        ([(1, "가", "010-0000-0001"), (2, "나", other_digits(0x660, "01000000002"))], "휴대폰"),  # 아라비아-인도 숫자
+        ([(1, "가", "010-0000-0001"), (2, "나", other_digits(0x966, "01000000002"))], "휴대폰"),  # 데바나가리 숫자
         ([(1, "가", "010-0000-0001"), (2, "나", "010-0000-0001")], "같은 전화번호"),
         ([(1, "가", "010-0000-0001"), (1, "나", "010-0000-0002")], "같은 번호"),
         ([(1, "가", "010-0000-0001"), (2, "", "010-0000-0002")], "이름이 비었"),
@@ -303,6 +310,25 @@ def test_one_bad_row_file_reports_the_row_and_the_count_and_builds_nothing(tmp_p
         ("A\U0010ffffB", "A-B.vcf"),
         (f"A{chr(0xFDCF)}B{chr(0xFDF0)}", f"A{chr(0xFDCF)}B{chr(0xFDF0)}.vcf"),  # 비문자 범위 바로 옆(FDCF·FDF0)은 그대로
         (f"A{chr(0xFFFD)}B", f"A{chr(0xFFFD)}B.vcf"),  # U+FFFD(대체 글자)는 비문자가 아니다
+        (f"{chr(0xA0)}모임{chr(0xA0)}", "모임.vcf"),  # 앞뒤의 공백은 유니코드 공백도 뗀다(브라우저가 맨 앞의 줄 안 바뀌는 공백을 _ 로 바꾼다)
+        (f"{chr(0x3000)}모임{chr(0x3000)}", "모임.vcf"),  # 전각 공백
+        (f"{chr(0x2003)}모임", "모임.vcf"),
+        (f"{chr(0xA0)}{chr(0x3000)}", "contacts.vcf"),  # 유니코드 공백뿐이면 기본 이름
+        (" . 모임 . ", "모임.vcf"),  # 공백과 점이 섞여도 앞뒤에서 모두 뗀다
+        (f"가{chr(0x3164)}나", "가-나.vcf"),  # 채움 글자·점자 빈칸 같은 눈에 안 보이는 글자도 -
+        (f"A{chr(0x2800)}B", "A-B.vcf"),
+        (f"A{chr(0x34F)}B", "A-B.vcf"),  # 결합 이음표
+        (f"A{chr(0x115F)}{chr(0x1160)}B", "A-B.vcf"),
+        (f"A{chr(0x17B4)}B", "A-B.vcf"),
+        (f"A{chr(0x2065)}B", "A-B.vcf"),
+        (f"A{chr(0xFFA0)}B", "A-B.vcf"),
+        (f"A{chr(0xFFF0)}B", "A-B.vcf"),
+        (f"{chr(0x3164)}모임{chr(0x3164)}", "-모임-.vcf"),  # 앞뒤에 있으면 공백이 아니라 - 로 남는다
+        (f"하나{chr(0x2764)}{chr(0xFE0F)}", f"하나{chr(0x2764)}{chr(0xFE0F)}.vcf"),  # 이모지에 붙은 변이 선택자는 글자의 일부라 그대로
+        (f"A{chr(0xFE00)}B{chr(0xE0100)}", f"A{chr(0xFE00)}B{chr(0xE0100)}.vcf"),  # 다른 변이 선택자도 그대로(브라우저도 그대로 둔다)
+        (chr(0xFE0F), "contacts.vcf"),  # 변이 선택자뿐이면 보이는 이름이 없으니 기본 이름
+        (f" {chr(0xE0100)}{chr(0xFE00)}. ", "contacts.vcf"),
+        (f"{chr(0xFE0F)} 모임", f"{chr(0xFE0F)} 모임.vcf"),  # 보이는 글자가 있으면 그대로
     ],
 )
 def test_downloaded_file_is_named_after_the_group(tmp_path, org, fname):
@@ -406,6 +432,42 @@ def test_names_lose_control_characters_and_line_breaks():
         build_site.parse([(1, "가", "010-0000-0001"), (2, "\u200B\uFEFF \u202E", "010-0000-0002"), (3, "다", "010-0000-0003")])
     assert "3번째 줄: 이름이 비었" in str(e.value) and "3번째 줄(" not in str(e.value)
     assert build_site.parse([(1, "가\u200D나", "010-0000-0001"), (2, "다", "010-0000-0002")])[0][1] == "가\u200D나"  # 글자 사이의 것은 지키지 않고 그대로
+
+
+GHOSTS = (  # 눈에 안 보이는 글자 27가지: 채움 글자·점자 빈칸·결합 이음표·변이 선택자·태그·서식 글자·비문자. chr() 로 쓴다(글자를 그대로 적으면 눈에 안 보인다)
+    0x3164, 0x2800, 0x34F, 0x115F, 0x1160, 0x17B4, 0x17B5, 0x180B, 0x180E, 0x180F, 0x2065, 0xFE00, 0xFE0F, 0xFFA0, 0xFFF0, 0xFFF8,
+    0xE0001, 0xE0100, 0xE0FFF, 0x200B, 0xAD, 0x61C, 0x2060, 0xFEFF, 0xFDD0, 0xFFFE, 0x1FFFF,
+)
+
+
+def second_name(name):
+    return build_site.parse([(1, "가", "010-0000-0001"), (2, name, "010-0000-0002"), (3, "다", "010-0000-0003")])[1][1]
+
+
+@pytest.mark.parametrize("cp", GHOSTS, ids=lambda cp: f"U{cp:04X}")
+def test_a_name_of_only_invisible_characters_is_an_empty_name(cp):
+    for name in (chr(cp), f" {chr(cp)} ", chr(cp) * 3, chr(cp) + chr(0x3164)):
+        with pytest.raises(SystemExit) as e:
+            second_name(name)
+        assert "3번째 줄: 이름이 비었" in str(e.value) and "3번째 줄(" not in str(e.value), (hex(cp), name)
+
+
+def test_a_name_with_real_letters_keeps_the_invisible_ones_between_them():
+    for name in ("가" + chr(0x200D) + "나", "가" + chr(0x3164) + "나", "하나" + chr(0x2764) + chr(0xFE0F), "가" + chr(0x34F)):
+        assert second_name(name) == name
+
+
+@pytest.mark.parametrize("br", BREAKS, ids=lambda s: "+".join(f"U{ord(c):04X}" for c in s))
+def test_every_kind_of_line_break_in_a_name_becomes_one_space(tmp_path, br):
+    assert second_name(f"가{br}나{br}{br}다") == "가 나 다"  # 이름 칸은 한 줄이다: 줄바꿈 하나도 이어진 것도 공백 하나
+    src = tmp_path / "r.csv"
+    src.write_bytes(f'번호,이름,전화번호\r\n1,"가{br}나",010-0000-0001\r\n2,다,010-0000-0002\r\n'.encode("utf-8"))
+    slug, n = build_site.build(src, tmp_path / "s")
+    assert n == 2
+    for p in (tmp_path / "s" / slug / "m").glob("*.vcf"):
+        raw = p.read_bytes()
+        assert not re.search(rb"\r(?!\n)|(?<!\r)\n", raw)  # 줄 끝은 CRLF 뿐
+        assert [c["FN"] for c in cards(raw)] == (["가 나"] if p.stem == "2" else ["다"]), p.name  # 이름 값에 \n 이 들어가지 않는다
 
 
 def test_text_that_looks_like_vcard_lines_cannot_add_or_hide_cards(tmp_path):
