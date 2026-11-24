@@ -374,9 +374,11 @@ def test_browser_keeps_the_download_name_we_chose_even_with_invisible_characters
         (f"{chr(0x3000)}모임{chr(0x3000)}", "모임.vcf"),  # 전각 공백
         (f"가{chr(0x3164)}나", "가-나.vcf"),  # 한글 채움 글자
         (f"A{chr(0x2800)}B", "A-B.vcf"),  # 점자 빈칸
+        (f"A{chr(0xE0067)}B", "A_B.vcf"),  # 이모지 태그 글자(서식 글자 Cf): 우리는 그대로 두고, 크롬이 받으면서 하나씩 _ 로 바꾼다(2026-11 실측. 다른 브라우저는 그대로)
+        (chr(0x1F3F4) + "".join(chr(0xE0000 + ord(c)) for c in "gbeng") + chr(0xE007F), chr(0x1F3F4) + "_" * 6 + ".vcf"),  # 영국 깃발: 🏴 은 남고 태그 6개가 _ 6개
     ],
 )
-def test_browser_keeps_download_names_made_from_unicode_spaces_and_fillers(page, tmp_path_factory, org, want):
+def test_browser_download_names_for_unicode_spaces_fillers_and_emoji_tags(page, tmp_path_factory, org, want):
     srv, info = serve(tmp_path_factory, SAMPLE, org=org)
     try:
         open_page(page, info["url"])

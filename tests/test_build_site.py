@@ -16,6 +16,7 @@ import build_site  # noqa: E402
 SAMPLE = ROOT / "sample" / "roster.sample.csv"
 ORG = "샘플 모임"
 PHONE = re.compile(r"01\d[- ]?\d{3,4}[- ]?\d{4}")
+ENGLAND = chr(0x1F3F4) + "".join(chr(0xE0000 + ord(c)) for c in "gbeng") + chr(0xE007F)  # 검은 깃발 + 태그 글자 gbeng + 태그 끝 = 영국 깃발(태그 글자는 눈에 안 보이는 서식 글자 Cf)
 
 
 def digits(s):
@@ -287,6 +288,8 @@ def test_one_bad_row_file_reports_the_row_and_the_count_and_builds_nothing(tmp_p
         ("모임<1>", "모임-1-.vcf"),
         ("  .. ", "contacts.vcf"),  # 남는 게 없으면 기본 이름
         ("A B~C&D'E%F#G", "A B~C&D'E%F#G.vcf"),  # 쓸 수 없는 글자가 아니면 그대로(브라우저가 ~ 를 _ 로 바꾸는 것은 브라우저 몫)
+        ("CON", "CON.vcf"),  # 윈도 예약 이름도 그대로 둔다(윈도 크롬이 받을 때 앞에 _ 를 붙이는 것은 브라우저 몫)
+        ("nul.txt", "nul.txt.vcf"),
         (f"A{chr(0xA0)}B{chr(0x1F600)}C{chr(0xE000)}D", f"A{chr(0xA0)}B{chr(0x1F600)}C{chr(0xE000)}D.vcf"),  # 줄 안 바뀌는 공백·그림 문자·사용자 정의 글자도 그대로
         ("A\x00B", "A-B.vcf"),  # 제어문자
         ("A\tB", "A-B.vcf"),
@@ -329,6 +332,15 @@ def test_one_bad_row_file_reports_the_row_and_the_count_and_builds_nothing(tmp_p
         (chr(0xFE0F), "contacts.vcf"),  # 변이 선택자뿐이면 보이는 이름이 없으니 기본 이름
         (f" {chr(0xE0100)}{chr(0xFE00)}. ", "contacts.vcf"),
         (f"{chr(0xFE0F)} 모임", f"{chr(0xFE0F)} 모임.vcf"),  # 보이는 글자가 있으면 그대로
+        (f"A{chr(0xE0067)}B", f"A{chr(0xE0067)}B.vcf"),  # 이모지 태그 글자(서식 글자 Cf)도 이모지의 일부라 그대로(크롬이 받을 때 _ 로 바꾸는 것은 브라우저 몫)
+        (f"A{chr(0xE007F)}B", f"A{chr(0xE007F)}B.vcf"),  # 태그 끝 표시
+        (f"A{chr(0xE0001)}B", f"A{chr(0xE0001)}B.vcf"),  # 언어 태그
+        (ENGLAND, f"{ENGLAND}.vcf"),  # 깃발은 통째로(🏴 만 남기고 태그를 - 로 바꾸지 않는다)
+        (f"{ENGLAND} 모임", f"{ENGLAND} 모임.vcf"),
+        (chr(0xE007F), "contacts.vcf"),  # 태그뿐이면 보이는 이름이 없으니 기본 이름
+        (f" {chr(0xE0067)}{chr(0xE007F)}. ", "contacts.vcf"),
+        (f"A{chr(0x180E)}B", "A-B.vcf"),  # 180E(몽골어 모음 구분자)는 변이 선택자가 아니라 서식 글자라 -
+        (f"A{chr(0x180B)}B{chr(0x180D)}C{chr(0x180F)}", f"A{chr(0x180B)}B{chr(0x180D)}C{chr(0x180F)}.vcf"),  # 몽골어 변이 선택자는 그대로
     ],
 )
 def test_downloaded_file_is_named_after_the_group(tmp_path, org, fname):

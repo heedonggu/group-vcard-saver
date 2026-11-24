@@ -59,7 +59,7 @@ def read_table(path):
 # 채움 글자(FILLERS: 한글·크메르 채움, 결합 이음표, 점자 빈칸 …)와, 앞 글자에 붙어 모양만 바꾸는 변이 선택자·태그(SELECTORS).
 # SELECTORS 는 이모지(하트+FE0F)·한자 안에서 쓰이니 글자 사이에서는 지우지 않고, 이름이 그것뿐일 때만 빈 이름으로 본다.
 FILLERS = ((0x034F, 0x034F), (0x115F, 0x1160), (0x17B4, 0x17B5), (0x2065, 0x2065), (0x2800, 0x2800), (0x3164, 0x3164), (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8))
-SELECTORS = ((0x180B, 0x180F), (0xFE00, 0xFE0F), (0xE0000, 0xE0FFF))
+SELECTORS = ((0x180B, 0x180D), (0x180F, 0x180F), (0xFE00, 0xFE0F), (0xE0000, 0xE0FFF))  # 180E(몽골어 모음 구분자)는 변이 선택자가 아니라 서식 글자
 
 
 def inside(c, ranges):
@@ -300,8 +300,9 @@ h1{margin:14px 0 6px;font-size:28px;line-height:1.25;letter-spacing:-.02em}
 
 def file_name(org):
     """받는 파일 이름 = 모임 이름 그대로 + .vcf. 파일 이름에 못 쓰는 글자(\\ / : * ? " < > |)와 눈에 안 보이는 글자만 -,
-    연달아 있으면 하나. 앞뒤의 공백(유니코드 공백 포함)·점은 떼고, 남는 게 없거나 변이 선택자뿐이면 contacts."""
-    s = "".join("\0" if c in '\\/:*?"<>|' or hidden(c) else c for c in org)
+    연달아 있으면 하나. 변이 선택자·태그(SELECTORS)는 서식 글자(Cf)여도 이모지(깃발 🏴+태그)·한자의 일부라 그대로 둔다.
+    앞뒤의 공백(유니코드 공백 포함)·점은 떼고, 남는 게 없거나 변이 선택자·태그뿐이면 contacts."""
+    s = "".join("\0" if c in '\\/:*?"<>|' or (hidden(c) and not inside(c, SELECTORS)) else c for c in org)
     s = re.sub(r"^[\s.]+|[\s.]+$", "", re.sub("\0+", "-", s))
     return ("contacts" if all(inside(c, SELECTORS) for c in s) else s) + ".vcf"
 
